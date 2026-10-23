@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+.next/
+coverage/
+graphify-out/
+.DS_Store
+.tasks/
+.agent-collab/
+source/
+REQUIREMENTS.md
