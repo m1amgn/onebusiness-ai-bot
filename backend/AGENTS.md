@@ -31,6 +31,26 @@ authentication rejects malformed input before hashing and reads id/version toget
 Repository contracts in tests/contract currently run against the transactional fake;
 the PostgreSQL leg uses the same tests once the persistence adapter is installed.
 
+## Schema and test databases
+
+Typed tables are in infrastructure/sqlalchemy/tables.py. Alembic revisions are
+immutable schema snapshots under alembic/versions; never import current models
+from a historical revision. Run root yarn db:migrate for development migrations.
+The migration environment serializes upgrades with a transaction advisory lock.
+Generated revisions run Ruff formatting/lint hooks; use uv for Alembic commands.
+A stage adding a migration records the shared development-head change in its diary.
+
+Writing integration tests request database_url and clean_database. The session
+owns a taskbot_test_<unix-time>_<8 hex> database, migrates it and holds an anchor
+connection until teardown. Cleanup checks its name and current_database before
+truncating tables. Never pass the development database to destructive test helpers.
+Stale cleanup uses age only for candidates, skips live connections and uses plain
+DROP without FORCE so a late connection is protected too. FORCE is reserved for
+the context's own database. Use small test pools; the shared server has 100 slots.
+Migrations needing an empty database use tests.databases.test_database instead of
+the session database. Keep both pytest async loop scopes at session. Subprocess
+checks use tests.processes.run_process, which kills the whole group on timeout.
+
 ## Settings
 
 Use `class BotSettings(BaseAppSettings, ExtractorSettingsMixin)` and equivalents.

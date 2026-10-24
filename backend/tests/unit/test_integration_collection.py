@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 
 def test_collect_only_needs_no_running_infrastructure() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-m", "integration"],
+        [sys.executable, "-m", "pytest", "--collect-only", "-m", "integration", "-q"],
         cwd=Path(__file__).resolve().parents[2],
         env=os.environ
         | {
@@ -19,4 +20,23 @@ def test_collect_only_needs_no_running_infrastructure() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2/" in result.stdout
+    baseline = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-m", "integration", "-q"],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert baseline.returncode == 0, baseline.stdout + baseline.stderr
+    expected = [
+        line for line in baseline.stdout.splitlines() if line.startswith("tests/") and "::" in line
+    ]
+    actual = [
+        line for line in result.stdout.splitlines() if line.startswith("tests/") and "::" in line
+    ]
+    assert actual == expected
+    assert actual
+    summary = re.search(r"(\d+)(?:/\d+)? tests collected", result.stdout)
+    assert summary is not None
+    assert int(summary.group(1)) == len(expected)

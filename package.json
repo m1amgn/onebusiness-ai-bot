@@ -23,7 +23,7 @@
     "infra:stop": "node scripts/infra.mjs stop",
     "dev:api": "uv run --locked --directory backend uvicorn --factory taskbot.entrypoints.api.app:create_app --reload --port 8000",
     "dev:whisper": "node scripts/dev-whisper.mjs",
-    "db:migrate": "node scripts/not-built.mjs db:migrate S2",
+    "db:migrate": "uv run --locked --directory backend alembic upgrade head",
     "dev:seed": "node scripts/not-built.mjs dev:seed S2",
     "dev:worker": "node scripts/not-built.mjs dev:worker S3",
     "dev:bot": "node scripts/not-built.mjs dev:bot S4"
