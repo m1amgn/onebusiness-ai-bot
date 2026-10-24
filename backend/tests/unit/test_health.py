@@ -16,3 +16,7 @@ def test_health_contract_requires_defaulted_response_fields() -> None:
     schema = create_app().openapi()
     assert schema["components"]["schemas"]["Health"]["required"] == ["status"]
     assert "/health" in schema["paths"]
+
+
+def test_health_operation_id_uses_the_route_name() -> None:
+    assert create_app().openapi()["paths"]["/health"]["get"]["operationId"] == "health"

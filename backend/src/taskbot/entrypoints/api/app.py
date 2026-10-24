@@ -15,6 +15,6 @@ async def health() -> Health:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="AI Task Bot")
-    app.get("/health", response_model=Health)(health)
+    app = FastAPI(title="AI Task Bot", generate_unique_id_function=lambda route: route.name)
+    app.get("/health")(health)
     return app

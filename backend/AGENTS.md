@@ -24,6 +24,7 @@ Run `uv run --locked --directory backend ruff check .`, `ruff format --check .`,
 From S1.2, `pytest -m integration` requires the real local PostgreSQL and Redis.
 Integration tests fail with an actionable message when infrastructure is down;
 they never silently skip.
+Collect-only runs do not probe the stores. `pytest tests/unit` also runs without them.
 
 ## Shared infrastructure and test isolation
 
@@ -39,5 +40,6 @@ S3 owns that fixture. No test assumes exclusive use. S1's tests only read.
 
 Change Pydantic response models, then run root `yarn api:schema`; generated
 TypeScript and Zod files are never edited by hand. `yarn api:check` detects drift.
+Route names become OpenAPI operation ids; choose unique names.
 A stage that adds dependencies or a top-level backend directory, such as
 `alembic/`, reruns the backend smoke build and records its result.

@@ -3,7 +3,7 @@
 export type {
   ClientOptions,
   Health,
-  HealthHealthGetData,
-  HealthHealthGetResponse,
-  HealthHealthGetResponses,
+  HealthData,
+  HealthResponse,
+  HealthResponses,
 } from './types.gen';

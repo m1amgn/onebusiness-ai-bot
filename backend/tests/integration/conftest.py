@@ -26,6 +26,8 @@ def ensure_reachable(service: str, url: str, default_port: int) -> None:
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_finish(session: pytest.Session) -> None:
+    if session.config.option.collectonly:
+        return
     if not any(item.get_closest_marker("integration") for item in session.items):
         return
     settings = InfraTestSettings()

@@ -12,4 +12,4 @@ export const zHealth = z.object({
 /**
  * Successful Response
  */
-export const zHealthHealthGetResponse = zHealth;
+export const zHealthResponse = zHealth;

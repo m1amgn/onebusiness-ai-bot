@@ -3,11 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from taskbot.infrastructure.settings import BaseAppSettings, ExtractorSettingsMixin
-
-
-class SampleSettings(BaseAppSettings, ExtractorSettingsMixin):
-    pass
+from tests.settings import SampleSettings
 
 
 @pytest.fixture(autouse=True)
@@ -56,3 +52,10 @@ def test_invalid_log_level_is_rejected(tmp_path: Path) -> None:
     dotenv.write_text("LOG_LEVEL=LOUD\n")
     with pytest.raises(ValidationError, match="log_level"):
         SampleSettings(_env_file=dotenv)
+
+
+def test_default_environment_file_is_in_the_repository_root() -> None:
+    dotenv = SampleSettings.model_config["env_file"]
+    assert isinstance(dotenv, Path)
+    assert dotenv.name == ".env"
+    assert (dotenv.parent / ".env.example").is_file()

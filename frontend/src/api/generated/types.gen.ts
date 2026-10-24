@@ -14,18 +14,18 @@ export type Health = {
   status: 'ok';
 };
 
-export type HealthHealthGetData = {
+export type HealthData = {
   body?: never;
   path?: never;
   query?: never;
   url: '/health';
 };
 
-export type HealthHealthGetResponses = {
+export type HealthResponses = {
   /**
    * Successful Response
    */
   200: Health;
 };
 
-export type HealthHealthGetResponse = HealthHealthGetResponses[keyof HealthHealthGetResponses];
+export type HealthResponse = HealthResponses[keyof HealthResponses];
