@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from taskbot.application.register_user import RegisterOrGetUser
-from taskbot.domain.events import DomainEvent, TaskCreated
+from taskbot.domain.events import DomainEvent, TaskCreated, TaskView
 from taskbot.domain.extraction import Extraction
 from taskbot.domain.messages import InboundMessage, MessageKind, MessageRef, NewInboundMessage
 from taskbot.domain.ports.persistence import UnitOfWork, UnitOfWorkFactory
@@ -88,5 +88,5 @@ class CreateTasksFromMessage:
                 raise RuntimeError("Conflicting message disappeared")
             return DuplicateMessage(existing.id)
         tasks = await uow.tasks.add_many(user_id, message.id, extraction.tasks, now)
-        uow.record(*(TaskCreated(user_id=user_id, task=task.to_view()) for task in tasks))
+        uow.record(*(TaskCreated(user_id=user_id, task=TaskView.from_task(task)) for task in tasks))
         return CreatedMessage(user_id, message, tasks)

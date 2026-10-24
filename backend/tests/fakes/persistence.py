@@ -1,3 +1,10 @@
+"""Transactional behavior fake, not a database constraint simulator.
+
+PostgreSQL alone enforces foreign keys, general unique constraints and sequence gaps.
+The fake models the repository-specific duplicate rules and reuses ids after rollback.
+Real-store integration tests verify the storage constraints and concurrency windows.
+"""
+
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy

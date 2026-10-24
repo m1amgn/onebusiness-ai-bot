@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.domain.users import TelegramIdentity
@@ -8,10 +8,11 @@ async def test_user_upsert_and_token_contract(uows: UnitOfWorkFactory, now: date
     async with uows() as uow:
         first = await uow.users.upsert(TelegramIdentity(7, "A\x00"), now)
         assert first.created
-        again = await uow.users.upsert(TelegramIdentity(7, "B"), now)
+        again = await uow.users.upsert(TelegramIdentity(7, "B"), now + timedelta(seconds=1))
         assert not again.created
         assert again.user.id == first.user.id
         assert again.user.display_name == "B"
+        assert again.user.updated_at == now + timedelta(seconds=1)
         assert await uow.users.get(first.user.id) == again.user
         assert await uow.users.rotate_token(first.user.id, "hash1", now) == 1
         assert await uow.users.get_token_version(first.user.id) == 1

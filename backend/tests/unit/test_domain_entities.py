@@ -25,6 +25,11 @@ def test_all_task_status_pairs_and_strict_clock_order() -> None:
     assert first is not None
     second = first.change_status(TaskStatus.COMPLETED, now)
     assert second is not None
+    assert first.updated_at == now + timedelta(microseconds=1)
+    assert second.updated_at == now + timedelta(microseconds=2)
+    ahead = second.change_status(TaskStatus.PENDING, now + timedelta(seconds=10))
+    assert ahead is not None
+    assert ahead.updated_at == now + timedelta(seconds=10)
     for events in permutations((first, second)):
         held = task
         for event in events:
@@ -34,13 +39,13 @@ def test_all_task_status_pairs_and_strict_clock_order() -> None:
 
 
 def test_events_exclude_routing_identity_and_use_one_task_shape() -> None:
-    from taskbot.domain.events import AuthRevoked, TaskCreated, TaskUpdated
+    from taskbot.domain.events import AuthRevoked, TaskCreated, TaskUpdated, TaskView
     from taskbot.domain.tasks import Task, TaskStatus
 
     now = datetime(2026, 1, 1, tzinfo=UTC)
     task = Task(1, 2, 3, 0, "Call home", "", TaskStatus.PENDING, now, now)
     for cls, kind in ((TaskCreated, "task.created"), (TaskUpdated, "task.updated")):
-        value = json.loads(cls(user_id=2, task=task.to_view()).model_dump_json())
+        value = json.loads(cls(user_id=2, task=TaskView.from_task(task)).model_dump_json())
         assert set(value) == {"type", "task"}
         assert value["type"] == kind
         assert set(value["task"]) == {

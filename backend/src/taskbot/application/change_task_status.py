@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from taskbot.domain.errors import TaskNotFoundError
-from taskbot.domain.events import DomainEvent, TaskUpdated
+from taskbot.domain.events import DomainEvent, TaskUpdated, TaskView
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.domain.ports.services import Clock
 from taskbot.domain.tasks import Task, TaskStatus
@@ -28,8 +28,8 @@ class ChangeTaskStatus:
             if changed is not None:
                 saved = await uow.tasks.save_status(changed)
                 if saved is None:
-                    raise TaskNotFoundError("Task disappeared while locked")
+                    raise RuntimeError("Task disappeared while locked")
                 task = saved
-                uow.record(TaskUpdated(user_id=user_id, task=task.to_view()))
+                uow.record(TaskUpdated(user_id=user_id, task=TaskView.from_task(task)))
             events = await uow.commit()
         return TaskChange(task, changed is not None, events)

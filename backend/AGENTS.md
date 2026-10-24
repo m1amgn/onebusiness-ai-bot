@@ -26,6 +26,10 @@ Application use cases receive ports. Extract before opening a unit of work.
 Composable within methods record events but never commit or return them; standalone
 execute results carry the events returned by commit. Publish only after commit with
 publish_events; publication failures are logged without undoing persisted work.
+CreateTasksFromMessage.within returns CreatedMessage or DuplicateMessage; standalone
+execute returns TasksCreated (which adds events) or DuplicateMessage. S5 composes the
+within result with voice-job completion in one unit of work. TaskView.from_task in
+domain/events.py converts an entity for events; entities do not import wire models.
 ChangeTaskStatus locks the owner-filtered task before reading the clock. Token
 authentication rejects malformed input before hashing and reads id/version together.
 Repository contracts in tests/contract run against both the transactional fake and
@@ -67,7 +71,8 @@ Root yarn dev:seed runs entrypoints/seed. Its composition root binds validated
 SeedSettings, SQL units of work, clock, extractor and token adapters. The reusable
 seed function invokes standalone task creation and token issue; duplicate messages
 still rotate the token. CLI message ids are negative microsecond timestamps to
-avoid real Telegram ids. Print tokens only in this explicit development output;
+avoid real Telegram ids. The CLI validates user ids as positive signed int64 values
+before it loads settings. Print tokens only in this explicit development output;
 result representations hide token/link. One post-commit call site currently logs
 unpublished events; S3 connects publish_events there. Always dispose the engine.
 

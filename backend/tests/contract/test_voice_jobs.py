@@ -68,12 +68,15 @@ async def test_bounded_claim_and_exhaustion(uows: UnitOfWorkFactory, now: dateti
             assert isinstance(outcome, Claimed)
             assert outcome.job.attempts == attempt
             assert await uow.voice_jobs.exhaust(job.id, now) is None
+            if attempt == 5:
+                assert await uow.voice_jobs.requeue(job.id, attempt, now) is None
             now += timedelta(seconds=451)
         assert isinstance(await uow.voice_jobs.claim(job.id, now), CeilingReached)
         exhausted = await uow.voice_jobs.exhaust(job.id, now)
         assert exhausted is not None
         assert exhausted.failure_kind == FailureKind.STUCK
         assert exhausted.last_enqueued_at == now
+        assert exhausted.updated_at == now
         assert await uow.voice_jobs.exhaust(job.id, now) is None
         await uow.commit()
 
@@ -135,10 +138,16 @@ async def test_queued_and_processing_sweep_stamps(uows: UnitOfWorkFactory, now: 
         stale = now + timedelta(seconds=461)
         assert await uow.voice_jobs.stamp_stale_queued(stale) == [job.id]
         assert await uow.voice_jobs.stamp_stale_queued(stale) == []
+        stamped = await uow.voice_jobs.get(job.id)
+        assert stamped is not None
+        assert stamped.updated_at == stale
         await uow.voice_jobs.claim(job.id, stale)
         later = stale + timedelta(seconds=461)
         assert await uow.voice_jobs.stamp_stale_processing(later) == [job.id]
         assert await uow.voice_jobs.stamp_stale_processing(later) == []
+        stamped = await uow.voice_jobs.get(job.id)
+        assert stamped is not None
+        assert stamped.updated_at == later
         await uow.commit()
 
 

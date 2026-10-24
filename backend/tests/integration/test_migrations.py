@@ -42,6 +42,10 @@ EXPECTED_CHECKS = {
 }
 
 
+def normalize_sql(value: str) -> str:
+    return re.sub(r"[\s()]+", "", value).replace("::charactervarying", "").replace("::text", "")
+
+
 async def development_schema() -> list[str]:
     connection = await asyncpg.connect(raw_url(str(InfraTestSettings().database_url)))
     try:
@@ -96,12 +100,7 @@ async def test_migration_schema_drift_and_downgrade() -> None:
                 "ck_voice_jobs_notified_terminal",
                 "ck_voice_jobs_deferred_terminal",
             }
-            normalized = {
-                name: re.sub(r"[\s()]+", "", definition)
-                .replace("::charactervarying", "")
-                .replace("::text", "")
-                for name, definition in checks.items()
-            }
+            normalized = {name: normalize_sql(definition) for name, definition in checks.items()}
             assert normalized == EXPECTED_CHECKS
             lengths = await connection.fetch("""
                 SELECT character_maximum_length FROM information_schema.columns
@@ -114,9 +113,16 @@ async def test_migration_schema_drift_and_downgrade() -> None:
                 SELECT pg_get_expr(indpred,indrelid) FROM pg_index
                 WHERE indexrelid='ix_voice_jobs_pending_last_enqueued'::regclass
             """)
-            assert "queued" in predicate
-            assert "processing" in predicate
-            assert "notified_at IS NULL" in predicate
+            expected = "status=ANYARRAY['queued','processing'][]ORnotified_atISNULL"
+            assert normalize_sql(predicate) == expected
+            definition = await connection.fetchval("""
+                SELECT indexdef FROM pg_indexes
+                WHERE indexname='ix_voice_jobs_pending_last_enqueued'
+            """)
+            assert normalize_sql(definition) == (
+                "CREATEINDEXix_voice_jobs_pending_last_enqueuedONpublic.voice_jobs"
+                "USINGbtreelast_enqueued_atWHERE" + expected
+            )
         finally:
             await connection.close()
         await asyncio.to_thread(command.downgrade, config, "base")

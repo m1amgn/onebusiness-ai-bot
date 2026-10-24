@@ -3,7 +3,9 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import asyncpg
+import pytest
 
+from tests import databases
 from tests.databases import (
     drop_abandoned_databases,
     maintenance_url,
@@ -14,6 +16,23 @@ from tests.databases import (
     test_database as database_context,
 )
 from tests.integration.settings import InfraTestSettings
+
+
+async def test_plain_drop_protects_a_live_anchor_when_the_precheck_misses_it(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def missed_precheck(connection: asyncpg.Connection, name: str) -> bool:
+        return False
+
+    # Only bypass our optimization; the connection and DROP are real PostgreSQL.
+    monkeypatch.setattr(databases, "has_live_connections", missed_precheck)
+    caplog.set_level("INFO", logger="tests.databases")
+    async with owned_database() as database:
+        name = urlsplit(database.url).path.removeprefix("/")
+        future = datetime.now(UTC) + timedelta(hours=7)
+        assert await drop_abandoned_databases(future, names={name}) == []
+        assert "Keeping live or concurrently removed test database" in caplog.text
+        assert await database.anchor.fetchval("SELECT 1") == 1
 
 
 async def test_live_owner_survives_age_filter_and_closed_owner_is_cleaned() -> None:

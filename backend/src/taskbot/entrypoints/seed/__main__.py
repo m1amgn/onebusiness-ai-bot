@@ -12,6 +12,16 @@ from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 SAMPLE_TEXT = "Call home and ask about the weekend."
 
 
+def positive_int64(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("User id must be a positive 64-bit integer") from error
+    if not 1 <= result <= 2**63 - 1:
+        raise argparse.ArgumentTypeError("User id must be a positive 64-bit integer")
+    return result
+
+
 async def run(telegram_user_id: int, text: str) -> None:
     settings = SeedSettings()
     logging.basicConfig(level=settings.log_level)
@@ -41,7 +51,7 @@ async def run(telegram_user_id: int, text: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create development tasks and a dashboard token.")
-    parser.add_argument("telegram_user_id", type=int)
+    parser.add_argument("telegram_user_id", type=positive_int64)
     parser.add_argument("text", nargs="*")
     args = parser.parse_args()
     text = " ".join(args.text) if args.text else SAMPLE_TEXT

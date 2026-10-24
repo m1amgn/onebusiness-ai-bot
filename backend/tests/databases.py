@@ -95,6 +95,14 @@ async def test_database(name_time: int | None = None) -> AsyncIterator[str]:  # 
         yield database.url
 
 
+async def has_live_connections(connection: asyncpg.Connection, name: str) -> bool:
+    return bool(
+        await connection.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=$1)", name
+        )
+    )
+
+
 async def drop_abandoned_databases(
     now: datetime, *, names: Collection[str] | None = None
 ) -> list[str]:
@@ -110,9 +118,7 @@ async def drop_abandoned_databases(
             name = str(row[0])
             if not is_abandoned(name, now) or (names is not None and name not in names):
                 continue
-            if await connection.fetchval(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=$1)", name
-            ):
+            if await has_live_connections(connection, name):
                 logger.info("Keeping test database with a live connection: %s", name)
                 continue
             try:

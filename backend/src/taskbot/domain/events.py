@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from taskbot.domain.tasks import TaskStatus
+from taskbot.domain.tasks import Task, TaskStatus
 
 
 class TaskView(BaseModel):
@@ -16,6 +16,19 @@ class TaskView(BaseModel):
     status: TaskStatus
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_task(cls, task: Task) -> Self:
+        return cls(
+            id=task.id,
+            inbound_message_id=task.inbound_message_id,
+            position=task.position,
+            title=task.title,
+            description=task.description,
+            status=task.status,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+        )
 
 
 class TaskCreated(BaseModel):

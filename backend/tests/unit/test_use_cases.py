@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -13,7 +13,7 @@ from taskbot.application.list_tasks import ListTasks
 from taskbot.application.publishing import publish_events
 from taskbot.application.register_user import RegisterOrGetUser
 from taskbot.domain.errors import EmptyMessageError, InvalidTokenError, TaskNotFoundError
-from taskbot.domain.events import AuthRevoked, DomainEvent
+from taskbot.domain.events import AuthRevoked, DomainEvent, TaskView
 from taskbot.domain.extraction import Extraction, ExtractorName, TaskDraft
 from taskbot.domain.messages import MessageKind, MessageRef
 from taskbot.domain.tasks import TaskStatus
@@ -65,7 +65,8 @@ async def test_create_duplicate_order_status_and_ownership() -> None:
     assert a.changed
     assert b.changed
     assert len(a.events) == len(b.events) == 1
-    assert b.task.updated_at > a.task.updated_at
+    assert a.task.updated_at == clock.now() + timedelta(microseconds=1)
+    assert b.task.updated_at == clock.now() + timedelta(microseconds=2)
     same = await change.execute(first.user_id, b.task.id, TaskStatus.COMPLETED)
     assert not same.changed
     assert same.events == ()
@@ -74,11 +75,47 @@ async def test_create_duplicate_order_status_and_ownership() -> None:
     assert await ListTasks(store).execute(999) == ()
     with pytest.raises(TaskNotFoundError):
         await change.execute(999, b.task.id, TaskStatus.PENDING)
-    held = first.tasks[0].to_view()
+    held = TaskView.from_task(first.tasks[0])
     for event in (b.events[0], a.events[0]):
         if event.type == "task.updated" and event.task.updated_at > held.updated_at:
             held = event.task
     assert held.status == TaskStatus.COMPLETED
+
+
+async def test_status_change_reads_an_advanced_clock() -> None:
+    from tests.contract.helpers import create_message
+
+    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
+    store = FakeStore()
+    async with store() as uow:
+        mid = await create_message(uow, clock.now())
+        tasks = await uow.tasks.add_many(1, mid, (TaskDraft(title="Call home"),), clock.now())
+        await uow.commit()
+    clock.advance(10)
+    ahead = await ChangeTaskStatus(store, clock).execute(1, tasks[0].id, TaskStatus.COMPLETED)
+    assert ahead.task.updated_at == clock.now()
+
+
+async def test_disappearance_after_lock_is_an_invariant_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from taskbot.domain.tasks import Task
+    from tests.contract.helpers import create_message
+    from tests.fakes.persistence import FakeTaskRepository
+
+    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
+    store = FakeStore()
+    async with store() as uow:
+        mid = await create_message(uow, clock.now())
+        tasks = await uow.tasks.add_many(1, mid, (TaskDraft(title="Call home"),), clock.now())
+        await uow.commit()
+
+    async def missing(self: FakeTaskRepository, task: Task) -> Task | None:
+        return None
+
+    monkeypatch.setattr(FakeTaskRepository, "save_status", missing)
+    with pytest.raises(RuntimeError, match="disappeared while locked"):
+        await ChangeTaskStatus(store, clock).execute(1, tasks[0].id, TaskStatus.COMPLETED)
 
 
 async def test_empty_text_never_extracts_or_opens_transaction() -> None:

@@ -19,6 +19,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from taskbot.domain.extraction import ExtractorName
+from taskbot.domain.limits import (
+    DESCRIPTION_MAX,
+    MAX_NOTIFY_ATTEMPTS,
+    MAX_TASKS_PER_MESSAGE,
+    MAX_TRANSCRIPTION_ATTEMPTS,
+    TITLE_MAX,
+)
 from taskbot.domain.messages import MessageKind
 from taskbot.domain.tasks import TaskStatus
 from taskbot.domain.voice_jobs import (
@@ -108,9 +115,11 @@ class TaskRow(Base):
         Index(
             "ix_tasks_user_message_position", "user_id", text("inbound_message_id DESC"), "position"
         ),
-        CheckConstraint("char_length(title) BETWEEN 1 AND 120", name="title_length"),
-        CheckConstraint("char_length(description) <= 2000", name="description_length"),
-        CheckConstraint("position BETWEEN 0 AND 9", name="position"),
+        CheckConstraint(f"char_length(title) BETWEEN 1 AND {TITLE_MAX}", name="title_length"),
+        CheckConstraint(
+            f"char_length(description) <= {DESCRIPTION_MAX}", name="description_length"
+        ),
+        CheckConstraint(f"position BETWEEN 0 AND {MAX_TASKS_PER_MESSAGE - 1}", name="position"),
     )
 
 
@@ -146,8 +155,10 @@ class VoiceJobRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         Index("uq_voice_jobs_telegram_ref", "telegram_chat_id", "telegram_message_id", unique=True),
-        CheckConstraint("attempts BETWEEN 0 AND 5", name="attempts"),
-        CheckConstraint("notify_attempts BETWEEN 0 AND 5", name="notify_attempts"),
+        CheckConstraint(f"attempts BETWEEN 0 AND {MAX_TRANSCRIPTION_ATTEMPTS}", name="attempts"),
+        CheckConstraint(
+            f"notify_attempts BETWEEN 0 AND {MAX_NOTIFY_ATTEMPTS}", name="notify_attempts"
+        ),
         CheckConstraint(
             "status <> 'done' OR inbound_message_id IS NOT NULL", name="done_has_message"
         ),

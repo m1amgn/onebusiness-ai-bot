@@ -47,6 +47,21 @@ def test_claim_leases_attempt_fences_and_ceiling() -> None:
     assert replace(job, status=VoiceJobStatus.QUEUED).exhaust(now) is not None
 
 
+def test_expired_first_attempt_is_not_exhausted_and_remaining_time_rounds_up() -> None:
+    from taskbot.domain.messages import MessageRef
+    from taskbot.domain.voice_jobs import LeaseLive, VoiceJob, classify_claim_refusal
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    initial = VoiceJob(1, 2, MessageRef(2, 3), "file", "unique", 5, None, now, now, now)
+    claimed = initial.claim(now)
+    assert claimed is not None
+    assert classify_claim_refusal(claimed, now + timedelta(seconds=0.6)) == LeaseLive(450)
+    assert classify_claim_refusal(claimed, now + timedelta(seconds=449.6)) == LeaseLive(1)
+    expired = now + timedelta(seconds=451)
+    assert claimed.exhaust(expired) is None
+    assert claimed.claim(expired) is not None
+
+
 def test_retry_completion_ack_and_terminal_guards() -> None:
     from taskbot.domain.messages import MessageRef
     from taskbot.domain.voice_jobs import (
@@ -100,6 +115,7 @@ def test_notification_deferral_and_fifth_attempt_crash_recovery() -> None:
     assert job.begin_notification(now) is None
     assert isinstance(classify_notification_refusal(job, now), NothingToNotify)
     job = replace(job, status=VoiceJobStatus.DONE, inbound_message_id=3)
+    assert classify_notification_refusal(job, now) == NotificationNotDue(0)
     first = job.begin_notification(now)
     assert first is not None
     due = now + timedelta(seconds=902)
@@ -107,6 +123,9 @@ def test_notification_deferral_and_fifth_attempt_crash_recovery() -> None:
     assert deferred is not None
     assert deferred.begin_notification(now + timedelta(seconds=500)) is None
     assert classify_notification_refusal(deferred, now + timedelta(seconds=500)) == (
+        NotificationNotDue(402)
+    )
+    assert classify_notification_refusal(deferred, now + timedelta(seconds=500.8)) == (
         NotificationNotDue(402)
     )
     shorter = deferred.defer_notification(now + timedelta(seconds=600), now)
