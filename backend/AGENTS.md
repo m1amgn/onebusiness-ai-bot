@@ -22,6 +22,15 @@ rules; the unbuilt Claude option returns that fallback marked degraded.
 Test service doubles live in tests/fakes. The read-only owner-row replay is
 `uv run --locked --directory backend python tests/acceptance/replay_s2.py` from root.
 
+Application use cases receive ports. Extract before opening a unit of work.
+Composable within methods record events but never commit or return them; standalone
+execute results carry the events returned by commit. Publish only after commit with
+publish_events; publication failures are logged without undoing persisted work.
+ChangeTaskStatus locks the owner-filtered task before reading the clock. Token
+authentication rejects malformed input before hashing and reads id/version together.
+Repository contracts in tests/contract currently run against the transactional fake;
+the PostgreSQL leg uses the same tests once the persistence adapter is installed.
+
 ## Settings
 
 Use `class BotSettings(BaseAppSettings, ExtractorSettingsMixin)` and equivalents.
