@@ -11,3 +11,9 @@ graphify-out/
 .agent-collab/
 source/
 REQUIREMENTS.md
+__pycache__/
+*.pyc
+.venv/
+*.tsbuildinfo
+.vite/
+frontend/.api-check/
