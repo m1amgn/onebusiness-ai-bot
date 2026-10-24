@@ -28,8 +28,16 @@ execute results carry the events returned by commit. Publish only after commit w
 publish_events; publication failures are logged without undoing persisted work.
 ChangeTaskStatus locks the owner-filtered task before reading the clock. Token
 authentication rejects malformed input before hashing and reads id/version together.
-Repository contracts in tests/contract currently run against the transactional fake;
-the PostgreSQL leg uses the same tests once the persistence adapter is installed.
+Repository contracts in tests/contract run against both the transactional fake and
+real PostgreSQL. Only the PostgreSQL parameter is marked integration. Tests that
+need a real unit of work request postgres_uows; sql_sessions uses a two-slot pool.
+
+SQL repositories use Core statements with table-column RETURNING, not ORM objects;
+the session identity map stays empty. Row mappings are validated into frozen domain
+entities. SqlAlchemyUnitOfWork owns commit, rollback and event collection. Atomic
+guarded writes own voice-job transitions; sweeps lock at most 100 rows with SKIP
+LOCKED and stamp them in the same transaction. SystemClock uses aware UTC; tokens
+use secrets.token_urlsafe(32), and only their SHA-256 hashes enter the database.
 
 ## Schema and test databases
 

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    Table,
     Text,
     text,
 )
@@ -38,6 +39,14 @@ class Base(DeclarativeBase):
             "pk": "pk_%(table_name)s",
         }
     )
+
+
+def concrete_table(model: type[Base]) -> Table:
+    # DeclarativeBase types __table__ as the broader FromClause, which can include views.
+    table = model.__table__
+    if not isinstance(table, Table):
+        raise TypeError("Persistence repositories require a concrete table")
+    return table
 
 
 def string_enum(enum: type[StrEnum], name: str) -> Enum:

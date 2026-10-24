@@ -8,7 +8,9 @@ from urllib.parse import urlsplit
 import pytest
 import pytest_asyncio
 from alembic import command
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from tests.databases import (
     clean_test_database,
     drop_abandoned_databases,
@@ -57,3 +59,23 @@ async def database_url() -> AsyncIterator[str]:
 @pytest_asyncio.fixture
 async def clean_database(database_url: str) -> None:
     await clean_test_database(database_url)
+
+
+@pytest_asyncio.fixture(scope="session")
+async def sql_sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
+
+    engine, sessions = create_engine_and_sessions(database_url, pool_size=2)
+    try:
+        yield sessions
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+def postgres_uows(
+    sql_sessions: async_sessionmaker[AsyncSession], clean_database: None
+) -> UnitOfWorkFactory:
+    from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+
+    return lambda: SqlAlchemyUnitOfWork(sql_sessions)
