@@ -90,7 +90,8 @@ curl -F file=@backend/tests/fixtures/voice-en.ogg -F response_format=json http:/
 ```
 
 Stop with Ctrl-C. The launcher forwards termination signals to the server and
-releases port 8178. The committed fixture is synthetic speech. No live Telegram,
+releases port 8178. Press Ctrl-C again to force a server that does not stop.
+The committed fixture is synthetic speech. No live Telegram,
 OpenAI or Anthropic integration is claimed by this foundation stage.
 
 ## Backend image

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
+import { isMain } from './lib/entrypoint.mjs';
 import { REPOSITORY_ROOT } from './lib/env.mjs';
 
 export const findOversizedFiles = (root = REPOSITORY_ROOT) => {
@@ -18,7 +19,7 @@ export const findOversizedFiles = (root = REPOSITORY_ROOT) => {
   for (const path of paths) {
     if (!['.py', '.ts', '.tsx', '.mjs', '.css'].includes(extname(path))) continue;
     if (/(^|\/)(tests|src\/test|src\/api\/generated|alembic\/versions)\//.test(path)) continue;
-    if (/\.test\./.test(path) || path.includes('/.api-check/')) continue;
+    if (/\.test\./.test(basename(path)) || path.includes('/.api-check/')) continue;
     const absolute = join(root, path);
     let stat;
     try {
@@ -35,7 +36,7 @@ export const findOversizedFiles = (root = REPOSITORY_ROOT) => {
   return oversized;
 };
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   const oversized = findOversizedFiles();
   for (const { path, lines } of oversized) console.error(`${path}: ${lines} lines (maximum 700)`);
   process.exitCode = oversized.length ? 1 : 0;

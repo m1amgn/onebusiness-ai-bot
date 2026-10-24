@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { isMain } from './lib/entrypoint.mjs';
 import { loadEnv, REPOSITORY_ROOT } from './lib/env.mjs';
 
 export const buildInfraCommand = (action, environment = process.env, root = REPOSITORY_ROOT) => {
@@ -42,7 +43,7 @@ export const buildInfraCommand = (action, environment = process.env, root = REPO
   };
 };
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   try {
     loadEnv(REPOSITORY_ROOT, false);
     const { args, env } = buildInfraCommand(process.argv[2]);

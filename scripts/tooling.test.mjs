@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import test from 'node:test';
 
@@ -44,11 +44,23 @@ test('size check detects 701 lines, accepts 700 and exempts tests and generated 
   assert.equal(spawnSync('git', ['init', '-q', root]).status, 0);
   write(root, 'fine.py', 'x\n'.repeat(700));
   write(root, 'large.ts', 'x\n'.repeat(700) + 'last line');
+  for (const name of ['large.mjs', 'large.css', 'large.tsx', 'x.test.d/big.py']) {
+    write(root, name, 'x\n'.repeat(701));
+  }
+  symlinkSync('large.ts', join(root, 'linked.py'));
   write(root, 'tests/large.py', 'x\n'.repeat(900));
   write(root, 'frontend/src/lib/large.test.ts', 'x\n'.repeat(900));
   write(root, 'frontend/src/api/generated/large.ts', 'x\n'.repeat(900));
-  assert.deepEqual(findOversizedFiles(root), [{ path: 'large.ts', lines: 701 }]);
-  rmSync(join(root, 'large.ts'));
+  assert.deepEqual(findOversizedFiles(root), [
+    { path: 'large.css', lines: 701 },
+    { path: 'large.mjs', lines: 701 },
+    { path: 'large.ts', lines: 701 },
+    { path: 'large.tsx', lines: 701 },
+    { path: 'x.test.d/big.py', lines: 701 },
+  ]);
+  for (const name of ['large.ts', 'large.mjs', 'large.css', 'large.tsx', 'x.test.d/big.py']) {
+    rmSync(join(root, name));
+  }
   assert.deepEqual(findOversizedFiles(root), []);
 });
 
@@ -108,6 +120,56 @@ test('infrastructure refuses unsafe names, ports and incomplete isolated setting
     assert.throws(() => buildInfraCommand('up', env, '/repository'));
 });
 
+test('infrastructure rejects invalid names before valid isolated ports can reach Docker', () => {
+  for (const stack of ['other', 'taskbot-', 'taskbot-X']) {
+    assert.throws(
+      () =>
+        buildInfraCommand('up', {
+          TASKBOT_STACK: stack,
+          TASKBOT_PG_PORT: '15432',
+          TASKBOT_REDIS_PORT: '16379',
+        }),
+      /An isolated stack name must start with taskbot-/,
+    );
+  }
+});
+
+test('infrastructure rejects port syntax and range independently of isolation rules', () => {
+  for (const key of ['TASKBOT_PG_PORT', 'TASKBOT_REDIS_PORT']) {
+    for (const port of ['0', '65536', '05432', 'invalid']) {
+      assert.throws(
+        () =>
+          buildInfraCommand('up', {
+            TASKBOT_STACK: 'taskbot-x',
+            TASKBOT_PG_PORT: '15432',
+            TASKBOT_REDIS_PORT: '16379',
+            [key]: port,
+          }),
+        /Stack ports must be integers from 1 to 65535/,
+      );
+    }
+  }
+});
+
+test('direct scripts run when import.meta.main is unavailable', (t) => {
+  const root = fixture(t);
+  cpSync(join(REPOSITORY_ROOT, 'scripts'), join(root, 'scripts'), { recursive: true });
+  assert.equal(spawnSync('git', ['init', '-q', root]).status, 0);
+  write(root, 'large.py', 'x\n'.repeat(701));
+  for (const [name, message] of [
+    ['check-file-size.mjs', /large\.py: 701 lines/],
+    ['check-api-schema.mjs', /failed|No such file/],
+    ['infra.mjs', /Usage: infra\.mjs/],
+    ['dev-whisper.mjs', /\.env not found/],
+  ]) {
+    const path = join(root, 'scripts', name);
+    writeFileSync(path, 'import.meta.main = undefined;\n' + readFileSync(path, 'utf8'));
+    const result = spawnSync(process.execPath, [path], { cwd: root, encoding: 'utf8' });
+    assert.equal(result.status, 1, name);
+    assert.match(result.stderr, message, name);
+  }
+});
+
 test('future-stage command fails with its building stage', () => {
   const result = spawnSync(process.execPath, ['scripts/not-built.mjs', 'dev:bot', 'S4'], {
     cwd: REPOSITORY_ROOT,
@@ -146,6 +208,18 @@ test('schema check runs the real exporter/generator and detects both kinds of st
   assert.ok(
     checkApiSchema(root, backend).some((path) => path.startsWith('frontend/src/api/generated')),
   );
+  rmSync(join(root, 'frontend/src/api/generated/zod.gen.ts'));
+  assert.deepEqual(checkApiSchema(root, backend), ['frontend/src/api/generated/zod.gen.ts']);
+  copyFileSync(
+    join(REPOSITORY_ROOT, 'frontend/src/api/generated/zod.gen.ts'),
+    join(root, 'frontend/src/api/generated/zod.gen.ts'),
+  );
+  write(root, 'frontend/src/api/generated/extra.ts', '// stale\n');
+  assert.deepEqual(checkApiSchema(root, backend), ['frontend/src/api/generated/extra.ts']);
+  const manifest = JSON.parse(readFileSync(join(root, 'frontend/package.json'), 'utf8'));
+  manifest.scripts['api:generate'] = 'node -e "process.exit(0)"';
+  write(root, 'frontend/package.json', JSON.stringify(manifest));
+  assert.throws(() => checkApiSchema(root, backend), /API generator wrote no files/);
   assert.equal(existsSync(join(root, 'frontend/.api-check')), false);
 });
 

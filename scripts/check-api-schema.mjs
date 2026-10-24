@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isMain } from './lib/entrypoint.mjs';
 import { REPOSITORY_ROOT } from './lib/env.mjs';
 
 const run = (command, args, options) => {
@@ -50,6 +51,8 @@ export const checkApiSchema = (root = REPOSITORY_ROOT, backend = join(root, 'bac
       cwd: root,
       env: { ...process.env, SCHEMA_IN: schema, SCHEMA_OUT: output },
     });
+    const actual = files(output);
+    if (actual.length === 0) throw new Error('API generator wrote no files in frontend/.api-check');
     // The scratch directory is ignored by ordinary formatting checks.
     run(
       'yarn',
@@ -66,12 +69,14 @@ export const checkApiSchema = (root = REPOSITORY_ROOT, backend = join(root, 'bac
       ],
       { cwd: root },
     );
-    const actual = files(output);
     const committed = files(generated);
-    if (JSON.stringify(actual) !== JSON.stringify(committed)) return ['frontend/src/api/generated'];
-    return actual
+    return [...new Set([...actual, ...committed])]
+      .sort()
       .filter(
-        (name) => !readFileSync(join(output, name)).equals(readFileSync(join(generated, name))),
+        (name) =>
+          !actual.includes(name) ||
+          !committed.includes(name) ||
+          !readFileSync(join(output, name)).equals(readFileSync(join(generated, name))),
       )
       .map((name) => `frontend/src/api/generated/${name}`);
   } finally {
@@ -80,7 +85,7 @@ export const checkApiSchema = (root = REPOSITORY_ROOT, backend = join(root, 'bac
   }
 };
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   try {
     const stale = checkApiSchema();
     for (const path of stale) console.error(`${path} is stale; run yarn api:schema`);

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { isMain } from './lib/entrypoint.mjs';
 import { loadEnv } from './lib/env.mjs';
 
 const requireExecutable = (name) => {
@@ -28,15 +29,15 @@ export const startWhisper = () => {
     ['-m', model, '--host', '127.0.0.1', '--port', '8178', '--convert', '-l', 'auto'],
     { stdio: 'inherit', detached: true },
   );
-  let stopping = false;
+  let forwardedSignal;
   const forwards = new Map(
     ['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => [
       signal,
       () => {
-        if (stopping) return;
-        stopping = true;
+        const nextSignal = forwardedSignal ? 'SIGKILL' : signal;
+        forwardedSignal = nextSignal;
         try {
-          process.kill(-child.pid, signal);
+          process.kill(-child.pid, nextSignal);
         } catch (error) {
           if (error.code !== 'ESRCH') throw error;
         }
@@ -50,12 +51,12 @@ export const startWhisper = () => {
   });
   child.once('exit', (code, signal) => {
     for (const [name, handler] of forwards) process.off(name, handler);
-    process.exitCode = code ?? (signal ? 1 : 0);
+    process.exitCode = code ?? (signal === forwardedSignal ? 0 : 1);
   });
   return child;
 };
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   try {
     startWhisper();
   } catch (error) {
