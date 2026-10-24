@@ -47,6 +47,8 @@ from a historical revision. Run root yarn db:migrate for development migrations.
 The migration environment serializes upgrades with a transaction advisory lock.
 Generated revisions run Ruff formatting/lint hooks; use uv for Alembic commands.
 A stage adding a migration records the shared development-head change in its diary.
+S2 adds revision 0001; apply it with yarn db:migrate before using development data.
+Tests migrate only owned databases; they never advance the development head.
 
 Writing integration tests request database_url and clean_database. The session
 owns a taskbot_test_<unix-time>_<8 hex> database, migrates it and holds an anchor
@@ -58,6 +60,16 @@ the context's own database. Use small test pools; the shared server has 100 slot
 Migrations needing an empty database use tests.databases.test_database instead of
 the session database. Keep both pytest async loop scopes at session. Subprocess
 checks use tests.processes.run_process, which kills the whole group on timeout.
+
+## Seed entry point
+
+Root yarn dev:seed runs entrypoints/seed. Its composition root binds validated
+SeedSettings, SQL units of work, clock, extractor and token adapters. The reusable
+seed function invokes standalone task creation and token issue; duplicate messages
+still rotate the token. CLI message ids are negative microsecond timestamps to
+avoid real Telegram ids. Print tokens only in this explicit development output;
+result representations hide token/link. One post-commit call site currently logs
+unpublished events; S3 connects publish_events there. Always dispose the engine.
 
 ## Settings
 
