@@ -1,0 +1,16 @@
+**/.env
+**/.env.*
+!**/.env.example
+**/.venv
+**/node_modules
+**/__pycache__
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+.git
+.tasks
+.agent-collab
+graphify-out
+source
+REQUIREMENTS.md
+frontend
