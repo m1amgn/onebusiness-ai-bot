@@ -13,7 +13,7 @@ const allowed = {
   lib: [],
   test: ['lib'],
 };
-const layers = ['app', 'features', 'components', 'api', 'lib'];
+const layers = Object.keys(allowed).filter((type) => type !== 'test');
 
 export default defineConfig([
   globalIgnores(['dist', 'src/api/generated/**', '.api-check/**']),
@@ -37,7 +37,7 @@ export default defineConfig([
     plugins: { boundaries },
     settings: {
       'import/resolver': { typescript: { project: './tsconfig.app.json' } },
-      'boundaries/ignore': ['src/index.css', 'src/vite-env.d.ts'],
+      'boundaries/ignore': ['src/vite-env.d.ts'],
       'boundaries/elements': [
         ...layers.map((type) => ({ type, pattern: `src/${type}` })),
         { type: 'test', pattern: 'src/test' },

@@ -31,7 +31,7 @@ Prettier sorts Tailwind classes inside cn and clsx calls.
 Use root `yarn infra:up` and `yarn infra:stop`; direct Compose bypasses the guard.
 The shared taskbot PostgreSQL/Redis stack belongs to the machine; leave it running.
 Never delete its volumes. Isolated stacks require their own project and ports.
-Writing integration tests create and drop a private PostgreSQL database and use
-unique prefixes for Redis keys, channels, locks and queues. Tests never assume
+An integration test that writes data creates and drops its own PostgreSQL database.
+It uses unique prefixes for Redis keys, channels, locks and queues. Tests never assume
 exclusive infrastructure and never write to the development database.
 API routes use /api; the dev proxy preserves that prefix. Public health is /health.
