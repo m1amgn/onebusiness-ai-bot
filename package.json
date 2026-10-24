@@ -1,0 +1,13 @@
+{
+  "name": "ai-task-bot",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": ["frontend"],
+  "engines": { "node": ">=26" },
+  "packageManager": "yarn@1.22.22",
+  "scripts": {
+    "verify:frontend": "yarn workspace frontend run verify",
+    "api:schema": "uv run --locked --directory backend python -m taskbot.entrypoints.api.export_schema openapi.json && yarn workspace frontend run api:generate",
+    "dev:web": "yarn workspace frontend run dev"
+  }
+}
