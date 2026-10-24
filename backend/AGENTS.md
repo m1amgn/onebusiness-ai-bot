@@ -10,6 +10,18 @@ Use `uv` from the root or `uv --directory backend`; never bare pip.
 `entrypoints` owns composition roots. Import-linter enforces these directions
 and forbids SDKs in the core. Ruff enforces formatting and complexity; mypy is strict.
 
+The domain now owns frozen task/user/message/voice-job entities and Protocol ports.
+Use MessageText.parse for messages and TaskDraft for extracted text; these are the
+canonical cleaners and limits. VoiceJob transitions return a new entity or refuse
+without mutation. Transcription and notification refusals have separate typed
+outcomes. A real task status change strictly increases updated_at by at least one
+microsecond; consumers must preserve that precision. Events exclude routing user_id
+from serialization. The heuristic extractor keeps exactly one task without language
+rules; the unbuilt Claude option returns that fallback marked degraded.
+
+Test service doubles live in tests/fakes. The read-only owner-row replay is
+`uv run --locked --directory backend python tests/acceptance/replay_s2.py` from root.
+
 ## Settings
 
 Use `class BotSettings(BaseAppSettings, ExtractorSettingsMixin)` and equivalents.
