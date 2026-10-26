@@ -125,6 +125,37 @@ An adaptive-mode deadline fallback is recorded as `degraded: true` with reason
 `timeout` and counts as evidence against that mode. Read each result to judge its
 gist and confirm that the model added no facts. Prompt changes need this replay.
 
+Live measurements on 26 October 2026 used `claude-haiku-5-5`, the eight synthetic
+rows and the bot's 8-second deadline. The first three runs had one cold request
+and seven prompt-cache reads; the final run reused the preceding probe's cache
+for all eight requests. No run used the fallback. Latency measures the extraction call,
+excluding process and SDK startup.
+
+| Prompt / thinking | Mean / median latency | Total cost, 8 calls | Cost per 1,000 at this sample mix | Quality |
+|---|---|---|---|---|
+| Initial / disabled | 2.350 / 1.809 s | $0.000986890 | $0.123361 | A1–A7 pass; A8 changes uncertainty and an approximate date |
+| Initial / adaptive | 2.660 / 1.842 s | $0.001067085 | $0.133386 | A1–A7 pass; A8 has the same defects |
+| First correction / disabled | 1.810 / 1.511 s | $0.001031065 | $0.128883 | A1–A7 pass; strengthened A8 checks reject both defects |
+| Final / disabled, warm cache | 1.518 / 1.150 s | $0.000940540 | $0.117568 | A1–A8 pass the strengthened checks and manual reading |
+
+The initial comparison supports keeping thinking `disabled`: adaptive used more
+output tokens and had higher mean latency without fixing A8. These small samples
+do not establish general performance. Three further A8-only tuning probes
+preceded the final passing replay. One separate A8 diagnostic call also failed
+filler removal. The final copyediting prompt preserves uncertainty, approximate
+dates and context; manual review confirmed all eight final rows. A speaker's
+own correction can remain as a clarification when its meaning is preserved.
+Adaptive has not been tested with this final prompt. The 36 recorded calls,
+including failed attempts and probes, cost $0.007439830 in total.
+
+Costs use the [Haiku 5.5 rates](https://platform.claude.com/docs/en/models/haiku-5-5/overview)
+and [prompt-cache pricing](https://platform.claude.com/docs/en/about-claude/pricing)
+checked on that date: USD per million tokens, $0.10 input, $0.50 output,
+$0.125 for a five-minute cache write and $0.01 for a cache read. For each response,
+cost is `(input × 0.10 + output × 0.50 + cache_write × 0.125 + cache_read × 0.01)
+/ 1,000,000`. The per-1,000 column scales these eight-message samples; it is not a
+monthly bill estimate.
+
 ## Workers
 
 Run each role in its own terminal. Give the role as the first argument, or set
@@ -218,8 +249,8 @@ curl -F file=@backend/tests/fixtures/voice-en.ogg -F response_format=json http:/
 
 Stop with Ctrl-C. The launcher forwards termination signals to the server and
 releases port 8178. Press Ctrl-C again to force a server that does not stop.
-The committed fixture is synthetic speech. No live Telegram,
-OpenAI or Anthropic integration is claimed by this foundation stage.
+The committed fixture is synthetic speech. No live Telegram or OpenAI integration
+is claimed. Claude extraction was checked with the synthetic replay above.
 
 ## Backend image
 
