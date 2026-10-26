@@ -99,8 +99,14 @@ The shared stack belongs to the machine. Leave it running; never delete its volu
 Each writing test session creates `taskbot_test_<unix-time>_<random>`, applies
 schema/migrations and drops its database. S2 owns that fixture and stale cleanup.
 Tests never write to the development database. Each Redis session uses unique
-prefixes for keys, channels, locks and Celery queues and removes its own keys;
-S3 owns that fixture. No test assumes exclusive use. S1's tests only read.
+prefixes for keys, channels, locks and Celery queues and removes its own keys.
+The redis_session fixture owns its namespace and returns a fresh child string per
+writing test through redis_session.child(). Cleanup scans only <session-id>:* in
+both application and broker databases. A same-host owner record and a process-held
+file lock prove abandoned ownership. Missing records, corrupt records, other hosts
+and missing/noncanonical lock paths retain keys; they require manual owner cleanup.
+Use SCAN MATCH taskbot_test_* to inspect retained records; age alone never permits
+deletion. No test assumes exclusive use. S1's tests only read.
 
 ## API schema and image
 
@@ -109,3 +115,21 @@ TypeScript and Zod files are never edited by hand. `yarn api:check` detects drif
 Route names become OpenAPI operation ids; choose unique names.
 A stage that adds dependencies or a top-level backend directory, such as
 `alembic/`, reruns the backend smoke build and records its result.
+
+## Redis adapters
+
+Build asynchronous clients through infrastructure/redis/client.py. Names use namespaced
+or user_channel; event routing uses internal users.id. RedisEventPublisher bounds a
+publish to one second. publish_events stops a batch after its first publication failure.
+RedisTicketStore issues 30-second, single-use tickets with SET NX EX and GETDEL;
+ConsumeRealtimeTicket also checks the current database token version without a commit.
+
+subscribe_user_events waits for Redis's subscription confirmation before yielding.
+UserEventSubscription.next returns raw event JSON or None after a healthy idle check.
+EventStreamGapError identifies a reconnect; all Redis/timeout failures become
+EventStreamError. A consumer closes its stream and refetches state after either error.
+Events received during the idle PING remain deliverable. S6 owns SSE and revocation checks.
+
+RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
+TASKBOT_ENV_FILE overrides the root dotenv file at settings construction; explicit
+_env_file=None still disables dotenv loading for in-process tests.

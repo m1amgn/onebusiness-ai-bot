@@ -14,7 +14,7 @@ dependencies = [
   "openai>=3.37,<4",
   "pydantic>=2.13.5",
   "pydantic-settings>=2.16.1",
-  "redis>=5,<6.5",
+  "redis>=6.4,<6.5",
   "sqlalchemy[asyncio]>=2.1.6",
   "uvicorn>=0.54.0",
 ]

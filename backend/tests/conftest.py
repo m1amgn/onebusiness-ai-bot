@@ -18,6 +18,7 @@ from tests.databases import (
     test_database,
 )
 from tests.integration.settings import InfraTestSettings
+from tests.redis_sessions import RedisSession, drop_abandoned_namespaces, open_redis_session
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -79,3 +80,10 @@ def postgres_uows(
     from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 
     return lambda: SqlAlchemyUnitOfWork(sql_sessions)
+
+
+@pytest_asyncio.fixture(scope="session")
+async def redis_session() -> AsyncIterator[RedisSession]:
+    await drop_abandoned_namespaces(datetime.now(UTC))
+    async with open_redis_session() as session:
+        yield session

@@ -20,6 +20,10 @@ class InvalidTokenError(DomainError):
     pass
 
 
+class InvalidTicketError(DomainError):
+    pass
+
+
 class StaleAttemptError(DomainError):
     pass
 
