@@ -68,13 +68,21 @@ checks use tests.processes.run_process, which kills the whole group on timeout.
 ## Seed entry point
 
 Root yarn dev:seed runs entrypoints/seed. Its composition root binds validated
-SeedSettings, SQL units of work, clock, extractor and token adapters. The reusable
-seed function invokes standalone task creation and token issue; duplicate messages
-still rotate the token. CLI message ids are negative microsecond timestamps to
-avoid real Telegram ids. The CLI validates user ids as positive signed int64 values
-before it loads settings. Print tokens only in this explicit development output;
-result representations hide token/link. One post-commit call site currently logs
-unpublished events; S3 connects publish_events there. Always dispose the engine.
+SeedSettings, SQL units of work, clock, extractor and token adapters. The CLI owns
+the Redis client and engine; register their cleanup immediately after construction.
+AsyncExitStack closes Redis before the engine and attempts both even if one fails.
+The CLI constructs RedisEventPublisher and passes it as build_seed_ports's explicit
+publisher keyword; SeedPorts contains no owned client. The reusable seed function
+invokes standalone task creation and token issue, then publish_events once after
+both commits. Duplicate messages still rotate the token and publish auth.revoked.
+Publication failure preserves the tasks, token and link and logs one failed batch.
+
+SeedResult.user_id comes from the token issue result's authoritative internal user
+id. Print its namespaced user_channel, never the Telegram id. CLI message ids are
+negative microsecond timestamps to avoid real Telegram ids. The CLI validates user
+ids as positive signed int64 values before it loads settings. Use load_settings to
+report configuration errors without echoing secret inputs. Print tokens only in
+this explicit development output; result representations hide token/link.
 
 ## Settings
 
@@ -131,6 +139,10 @@ EventStreamError. A consumer closes its stream and refetches state after either 
 Events received during the idle PING remain deliverable. S6 owns SSE and revocation checks.
 
 RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
+SeedSettings includes this mixin. The read-only owner replay is
+`uv run --locked --directory backend python tests/acceptance/replay_s3.py` from root.
+It verifies optional tokens, refused worker roles and the empty-namespace channel
+rule. It starts no worker and connects to no store; live seed tests prove publication.
 TASKBOT_ENV_FILE overrides the root dotenv file at settings construction; explicit
 _env_file=None still disables dotenv loading for in-process tests.
 
