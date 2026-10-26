@@ -8,7 +8,7 @@ from pydantic import Field, SecretStr, ValidationError
 
 from taskbot.infrastructure.settings.worker import WorkerSettings
 from tests.acceptance import replay_s3
-from tests.processes import run_process
+from tests.processes import COLD_START_TIMEOUT_SECONDS, run_process
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,7 +35,7 @@ async def test_read_only_s3_replay_checks_token_roles_and_internal_user_channel(
         sys.executable,
         "tests/acceptance/replay_s3.py",
         cwd=BACKEND_ROOT,
-        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
         env=dict(
             os.environ,
             TASKBOT_ENV_FILE=str(dotenv),

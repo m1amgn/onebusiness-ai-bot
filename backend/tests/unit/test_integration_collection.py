@@ -3,7 +3,7 @@ import re
 import sys
 from pathlib import Path
 
-from tests.processes import run_process
+from tests.processes import COLD_START_TIMEOUT_SECONDS, run_process
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,7 +18,7 @@ async def test_collect_only_needs_no_running_infrastructure() -> None:
         "integration",
         "-q",
         cwd=BACKEND_ROOT,
-        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
         env=os.environ
         | {
             "DATABASE_URL": "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:59999/taskbot",
@@ -35,7 +35,7 @@ async def test_collect_only_needs_no_running_infrastructure() -> None:
         "integration",
         "-q",
         cwd=BACKEND_ROOT,
-        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
     )
     assert baseline.returncode == 0, baseline.stdout + baseline.stderr
     expected = [

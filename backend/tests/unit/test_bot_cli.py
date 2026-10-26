@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from tests.processes import run_process
+from tests.processes import COLD_START_TIMEOUT_SECONDS, run_process
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -13,7 +13,7 @@ async def test_malformed_bot_token_exits_without_exposing_its_value() -> None:
         "-m",
         "taskbot.entrypoints.bot",
         cwd=BACKEND_ROOT,
-        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
         env=os.environ
         | {
             "TASKBOT_ENV_FILE": "/dev/null",
@@ -34,7 +34,7 @@ async def test_unreachable_redis_stops_before_telegram_is_constructed() -> None:
         "-m",
         "taskbot.entrypoints.bot",
         cwd=BACKEND_ROOT,
-        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
         env=os.environ
         | {
             "TASKBOT_ENV_FILE": "/dev/null",

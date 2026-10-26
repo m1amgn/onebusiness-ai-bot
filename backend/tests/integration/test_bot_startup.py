@@ -5,7 +5,7 @@ from pathlib import Path
 
 from taskbot.infrastructure.redis.bot_lock import POLL_LOCK_KEY, LockKeeper, PollingLock
 from taskbot.infrastructure.redis.client import create_redis_client
-from tests.processes import run_process
+from tests.processes import COLD_START_TIMEOUT_SECONDS, run_process
 from tests.redis_sessions import RedisSession
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -25,7 +25,7 @@ async def test_held_polling_lock_exits_cleanly_without_contacting_telegram(
                 "-m",
                 "taskbot.entrypoints.bot",
                 cwd=BACKEND_ROOT,
-                timeout_seconds=120,  # Include cold SDK imports on a shared host.
+                timeout_seconds=COLD_START_TIMEOUT_SECONDS,
                 env=os.environ
                 | {
                     "TASKBOT_ENV_FILE": "/dev/null",
@@ -55,7 +55,7 @@ async def test_unavailable_database_releases_the_lock_before_exit(
         "-m",
         "taskbot.entrypoints.bot",
         cwd=BACKEND_ROOT,
-        timeout_seconds=120,  # Include cold SDK imports on a shared host.
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
         env=os.environ
         | {
             "TASKBOT_ENV_FILE": "/dev/null",
