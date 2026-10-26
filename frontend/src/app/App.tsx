@@ -1,5 +1,10 @@
+import { SessionGate } from '../features/session/SessionGate';
+import { TaskBoardPage } from '../features/tasks/TaskBoardPage';
+
 export const App = () => (
-  <main className="mx-auto max-w-4xl p-6">
-    <h1 className="text-2xl font-semibold">AI Task Bot</h1>
-  </main>
+  <SessionGate>
+    {(token, clearIfCurrent) => (
+      <TaskBoardPage key={token} token={token} onUnauthorized={clearIfCurrent} />
+    )}
+  </SessionGate>
 );

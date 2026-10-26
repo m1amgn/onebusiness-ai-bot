@@ -42,6 +42,13 @@ Transport tests inject EventSource, sleep and random. Component tests use Strict
 and real timers; test/setup supplies browser layout/dialog stubs guarded for Node.
 The lint regression runs in Node from src/test/eslintRules.test.ts.
 
+The task hook owns the client, stream, page loader and serialized per-card writes.
+Its synchronous state ref lets async chains see each action before React renders.
+TaskBoardPage selects the desktop columns or phone tabs through useWideLayout.
+Task-aware cards own deletion confirmation; generic dialog and expandable text
+components stay in components. Desktop dragging uses a private MIME type; status
+buttons remain available for keyboard and touch.
+
 ## Local infrastructure
 
 Use root `yarn infra:up` and `yarn infra:stop`; direct Compose bypasses the guard.
