@@ -52,7 +52,18 @@ def test_cleaning_preserves_breaks_and_removes_unstorable_characters() -> None:
         ("a" * 121, "a" * 119 + "…", "a" * 121),
         ("word " * 24 + "x", "word " * 22 + "word…", "word " * 24 + "x"),
         ("界" * 130, "界" * 119 + "…", "界" * 130),
-        ("a" * 3000, "a" * 119 + "…", "a" * 1999 + "…"),
+        ("a" * 5000, "a" * 119 + "…", "a" * 4095 + "…"),
+    ],
+    ids=[
+        "short",
+        "sentence",
+        "list",
+        "long",
+        "title-limit",
+        "title-over",
+        "words",
+        "cjk",
+        "description-over",
     ],
 )
 async def test_fallback_keeps_one_task(raw: str, title: str, description: str) -> None:
@@ -82,7 +93,7 @@ async def test_fallback_is_total_on_accepted_hostile_text() -> None:
             continue
         result = await extractor.extract(text)
         assert 1 <= len(result.task.title) <= 120
-        assert len(result.task.description) <= 2000
+        assert len(result.task.description) <= 4096
 
 
 def test_drafts_and_extraction_validate_their_boundary() -> None:
@@ -91,6 +102,9 @@ def test_drafts_and_extraction_validate_their_boundary() -> None:
     draft = TaskDraft(title=" a\x00\n b ", description="c\ud800")
     assert draft.title == "a b"
     assert draft.description == "c"
+    assert len(TaskDraft(title="long", description="я" * 4096).description) == 4096
+    with pytest.raises(ValidationError, match="description"):
+        TaskDraft(title="long", description="я" * 4097)
     for title in ("", "a" * 121):
         with pytest.raises(ValidationError, match="title"):
             TaskDraft(title=title)

@@ -18,7 +18,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_CHECKS = {
     "ck_inbound_messages_extractor": "CHECKextractor=ANYARRAY['heuristic','claude'][]",
     "ck_inbound_messages_kind": "CHECKkind=ANYARRAY['text','voice'][]",
-    "ck_tasks_description_length": "CHECKchar_lengthdescription<=2000",
+    "ck_tasks_description_length": "CHECKchar_lengthdescription<=4096",
     "ck_tasks_position": 'CHECK"position">=0AND"position"<=9',
     "ck_tasks_status": "CHECKstatus=ANYARRAY['pending','in_progress','completed'][]",
     "ck_tasks_title_length": "CHECKchar_lengthtitle>=1ANDchar_lengthtitle<=120",
@@ -152,7 +152,7 @@ async def test_two_migrators_serialize_on_an_empty_database() -> None:
             group.create_task(upgrade())
         connection = await asyncpg.connect(raw_url(url))
         try:
-            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0001"
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0002"
             assert (
                 await connection.fetchval(
                     "SELECT count(*) FROM pg_tables WHERE schemaname='public'"

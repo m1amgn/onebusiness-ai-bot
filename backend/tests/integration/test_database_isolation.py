@@ -71,6 +71,6 @@ async def test_session_database_is_migrated(database_url: str, clean_database: N
         assert await connection.fetchval("SELECT current_database()") == urlsplit(
             database_url
         ).path.removeprefix("/")
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0001"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0002"
     finally:
         await connection.close()

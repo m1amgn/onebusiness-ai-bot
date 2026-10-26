@@ -54,7 +54,10 @@ The migration environment serializes upgrades with a transaction advisory lock.
 Generated revisions run Ruff formatting/lint hooks; use uv for Alembic commands.
 A stage adding a migration records the shared development-head change in its diary.
 S2 adds revision 0001; apply it with yarn db:migrate before using development data.
-Tests migrate only owned databases; they never advance the development head.
+Task descriptions now allow 4096 characters (revision 0002); apply migrations
+before any process writes longer descriptions. Downgrading to 0001 requires no
+stored description over 2000 characters. Tests migrate only owned databases;
+they never advance the development head.
 
 Writing integration tests request database_url and clean_database. The session
 owns a taskbot_test_<unix-time>_<8 hex> database, migrates it and holds an anchor
