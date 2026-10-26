@@ -197,6 +197,12 @@ A stage that adds dependencies or a top-level backend directory, such as
 
 ## Redis adapters
 
+Telegram adapters live in infrastructure/telegram. The notifier maps all aiogram
+and transport failures to the domain notifier errors without exception chaining.
+Only an edit's not-modified response is success; a gone edit target maps to
+MessageGoneError. The voice source caps declared and streamed bytes under one
+30-second deadline. No Telegram adapter logs raw exceptions or response bodies.
+
 Build asynchronous clients through infrastructure/redis/client.py. Names use namespaced
 or user_channel; event routing uses internal users.id. RedisEventPublisher bounds a
 publish to one second. publish_events stops a batch after its first publication failure.
