@@ -47,6 +47,7 @@ async def test_countdown_and_reserved_eta_survive_restart(
 async def test_worker_session_cleans_both_databases_and_beat_files(tmp_path: Path) -> None:
     async with open_redis_session() as session:
         async with running_worker("notify", session.child(), log_dir=tmp_path) as worker:
+            await worker.assert_owned_beat_schedule()
             await worker.send(
                 "s3test.sleep", seconds=0.1, marker="cleanup", log=str(tmp_path / "tasks.jsonl")
             )

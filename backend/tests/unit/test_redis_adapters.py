@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from taskbot.domain.events import AuthRevoked
 from taskbot.domain.jobs import TicketClaims
@@ -11,6 +12,23 @@ from taskbot.infrastructure.redis.events import RedisEventPublisher
 from taskbot.infrastructure.redis.subscription import EventStreamError, subscribe_user_events
 from taskbot.infrastructure.redis.tickets import RedisTicketStore
 from tests.fakes.tokens import FakeTokenGenerator
+
+
+@pytest.mark.parametrize("error", [TimeoutError("consumer write"), RedisError("consumer read")])
+async def test_consumer_body_errors_keep_their_identity(error: Exception) -> None:
+    client = Mock(spec=Redis)
+    pubsub = Mock()
+    client.pubsub.return_value = pubsub
+    pubsub.subscribe = AsyncMock()
+    pubsub.unsubscribe = AsyncMock()
+    pubsub.aclose = AsyncMock()
+    pubsub.get_message = AsyncMock(
+        return_value={"type": "subscribe", "channel": "ns:events:user:7"}
+    )
+    with pytest.raises(type(error)) as caught:
+        async with subscribe_user_events(cast(Redis, client), "ns:", 7):
+            raise error
+    assert caught.value is error
 
 
 async def test_all_adapter_names_carry_the_namespace() -> None:

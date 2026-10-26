@@ -6,6 +6,7 @@ import os
 import signal
 import threading
 import time
+from uuid import uuid4
 
 from billiard.exceptions import SoftTimeLimitExceeded
 from celery import signals
@@ -37,7 +38,8 @@ def sleep(self: Task, seconds: float, marker: str, log: str) -> None:
 @app.task(name="s3test.loop_identity")
 def loop_identity(log: str) -> None:
     loop = runtime.current_loop()
-    record(log, "loop", event="loop", loop=id(loop), pending=len(asyncio.all_tasks(loop)))
+    marker = vars(loop).setdefault("_taskbot_test_marker", uuid4().hex)
+    record(log, "loop", event="loop", loop_marker=marker, pending=len(asyncio.all_tasks(loop)))
 
 
 @app.task(name="s3test.publish")

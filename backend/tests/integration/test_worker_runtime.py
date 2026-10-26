@@ -38,7 +38,8 @@ async def test_stable_loop_publishes_and_drains_soft_limit(
         assert len(read_records(log, "cancelled")) == 1
         await worker.send("s3test.loop_identity", log=str(log))
         rows = await wait_records(log, "loop", count=3)
-        assert len({row["loop"] for row in rows}) == 1
+        assert len({row["loop_marker"] for row in rows}) == 1
+        assert len({row["pid"] for row in rows}) == 1
         assert all(row["pending"] == 0 for row in rows)
 
 

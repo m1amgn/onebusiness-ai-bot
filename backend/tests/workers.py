@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import pty
+import shutil
 import signal
 import socket
 import subprocess
@@ -63,6 +64,7 @@ def worker_environment(namespace: str, log_dir: Path) -> dict[str, str]:
         "TASKBOT_TEST_FAIL_CHILD_RUNTIME",
         "TASKBOT_TEST_REPLACEMENT_INIT_DELAY",
         "TASKBOT_TEST_ALIVE_TIMEOUT",
+        "TASKBOT_WORKER_MAIN_PID",
     ):
         env.pop(key, None)
     env.update(
@@ -127,6 +129,21 @@ class RunningWorker:
             raise RuntimeError("Worker has no controlling terminal")
         os.write(self.terminal_fd, b"\x03")
 
+    async def assert_owned_beat_schedule(self) -> None:
+        assert self.role == "notify"
+        assert self.schedule_path.parent == Path(self.env["TMPDIR"])
+        assert self.schedule_path.name.endswith(self.namespace.replace(":", "_"))
+        async with asyncio.timeout(5):
+            # Schedule-file creation has no portable asynchronous notification.
+            while not self.schedule_path.exists():  # noqa: ASYNC110
+                await asyncio.sleep(0.05)
+        # This private directory was empty at launch. A namespace regression cannot
+        # read, create or delete the shared development worker's schedule file.
+        assert all(
+            path.name.startswith(self.schedule_path.name)
+            for path in self.schedule_path.parent.glob("celerybeat-schedule*")
+        )
+
     @property
     def pid(self) -> int:
         return self.main_pid or self.process.pid
@@ -174,28 +191,40 @@ class RunningWorker:
         if self.terminal_fd is not None:
             await self._stop_terminal()
             return
-        if self.process.returncode is None:
-            with suppress(ProcessLookupError):
-                os.kill(self.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(self.process.wait(), 30)
-            except TimeoutError:
+        timed_out = False
+        remaining: list[int] = []
+        forced = False
+        try:
+            if self.process.returncode is None:
+                with suppress(ProcessLookupError):
+                    os.kill(self.pid, signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(self.process.wait(), 30)
+                except TimeoutError:
+                    timed_out = True
+            deadline = time.monotonic() + (0 if timed_out else 3)
+            # Process-group membership has no portable asynchronous notification.
+            while group_pids(self.pid) and time.monotonic() < deadline:  # noqa: ASYNC110
+                await asyncio.sleep(0.1)
+            remaining = group_pids(self.pid)
+        finally:
+            forced = bool(group_pids(self.pid))
+            if forced:
                 with suppress(ProcessLookupError):
                     os.killpg(self.pid, signal.SIGKILL)
-                await self.process.wait()
-        deadline = time.monotonic() + 3
-        # Process-group membership has no portable asynchronous notification.
-        while group_pids(self.pid) and time.monotonic() < deadline:  # noqa: ASYNC110
-            await asyncio.sleep(0.1)
-        remaining = group_pids(self.pid)
-        if remaining:
-            with suppress(ProcessLookupError):
-                os.killpg(self.pid, signal.SIGKILL)
-            await asyncio.sleep(0.3)
+            await asyncio.wait_for(self.process.wait(), 5)
+            if forced:
+                await asyncio.sleep(0.3)
         assert not group_pids(self.pid), f"Worker group survived: {remaining}"
+        message = f"Worker warm shutdown required SIGKILL or left processes: {remaining}"
+        assert not timed_out, message
+        assert not remaining, message
+        assert not forced, message
 
     async def _stop_terminal(self) -> None:
         session_id = self.process.pid
+        remaining: set[int] = set()
+        forced = False
         try:
             if self.main_pid is not None:
                 with suppress(ProcessLookupError):
@@ -211,19 +240,26 @@ class RunningWorker:
                 if not session_groups(session_id) - {session_id}:
                     break
                 await asyncio.sleep(0.1)
+            # Snapshot before the supervisor's finalizer can erase a leaked child.
+            remaining = session_groups(session_id) - {session_id}
         finally:
             try:
-                await self._reap_terminal_supervisor()
+                forced = await self._reap_terminal_supervisor()
             finally:
                 groups = session_groups(session_id)
+                forced = forced or bool(groups)
                 for group in groups:
                     with suppress(ProcessLookupError):
                         os.killpg(group, signal.SIGKILL)
                 if groups:
                     await asyncio.sleep(0.3)
         assert not session_groups(session_id), "Owned terminal session survived"
+        message = f"Terminal warm shutdown required SIGKILL or left groups: {sorted(remaining)}"
+        assert not remaining, message
+        assert not forced, message
 
-    async def _reap_terminal_supervisor(self) -> None:
+    async def _reap_terminal_supervisor(self) -> bool:
+        forced = False
         if self.process.returncode is None:
             with suppress(ProcessLookupError):
                 self.process.terminate()
@@ -231,9 +267,11 @@ class RunningWorker:
             await asyncio.wait_for(self.process.wait(), 5)
         finally:
             if self.process.returncode is None:
+                forced = True
                 with suppress(ProcessLookupError):
                     self.process.kill()
                 await self.process.wait()
+        return forced
 
 
 @asynccontextmanager
@@ -243,7 +281,7 @@ async def running_worker(
     *,
     log_dir: Path,
     replacement_delay: int = 0,
-    alive_timeout: int = 30,
+    alive_timeout: int | None = None,
     fail_runtime: bool = False,
     wait_ready: bool = True,
     developer_command: bool = False,
@@ -251,7 +289,10 @@ async def running_worker(
     env = worker_environment(namespace, log_dir)
     env["TASKBOT_TEST_TERMINAL_STATE"] = env["TASKBOT_TEST_CHILD_STARTS"] + "-terminal.json"
     env["TASKBOT_TEST_REPLACEMENT_INIT_DELAY"] = str(replacement_delay)
-    env["TASKBOT_TEST_ALIVE_TIMEOUT"] = str(alive_timeout)
+    if alive_timeout is not None:
+        if alive_timeout != 4:
+            raise ValueError("Only the four-second replacement negative control may override")
+        env["TASKBOT_TEST_ALIVE_TIMEOUT"] = str(alive_timeout)
     if fail_runtime:
         env["TASKBOT_TEST_FAIL_CHILD_RUNTIME"] = "1"
     path = log_dir / f"{role}-{uuid4().hex}.log"
@@ -261,7 +302,7 @@ async def running_worker(
         else [sys.executable, "-m", "taskbot.entrypoints.worker"]
     )
     app = create_celery_app(broker_url=env["CELERY_BROKER_URL"], namespace=namespace)
-    schedule = Path(beat_schedule_path(namespace))
+    schedule = private_schedule(namespace, log_dir, env)
     try:
         with worker_output(path, terminal=developer_command) as (output, stdin, terminal_fd):
             if developer_command:
@@ -290,22 +331,42 @@ async def running_worker(
                 schedule,
                 terminal_fd,
             )
+            failed = False
             try:
                 if wait_ready:
                     await worker.ready()
                 yield worker
+            except BaseException:
+                failed = True
+                raise
             finally:
-                await worker.stop()
+                try:
+                    await worker.stop()
+                except AssertionError:
+                    if not failed:
+                        raise
     finally:
         app.close()
         remove_worker_files(schedule, env)
 
 
+def private_schedule(namespace: str, log_dir: Path, env: dict[str, str]) -> Path:
+    directory = log_dir / ("beat-" + uuid4().hex)
+    directory.mkdir()
+    env["TMPDIR"] = str(directory)
+    return directory / Path(beat_schedule_path(namespace)).name
+
+
 def remove_worker_files(schedule: Path, env: dict[str, str]) -> None:
-    for suffix in ("", "-wal", "-shm"):
-        schedule.with_name(schedule.name + suffix).unlink(missing_ok=True)
+    for base in (schedule, schedule.parent / "celerybeat-schedule"):
+        for suffix in ("", "-wal", "-shm"):
+            base.with_name(base.name + suffix).unlink(missing_ok=True)
     Path(env["TASKBOT_TEST_CHILD_STARTS"]).unlink(missing_ok=True)
     Path(env["TASKBOT_TEST_TERMINAL_STATE"]).unlink(missing_ok=True)
+    # Yarn and uv create launcher shims/locks under TMPDIR too. The harness created
+    # this private directory, and every child that used it has already exited.
+    assert schedule.parent == Path(env["TMPDIR"])
+    shutil.rmtree(schedule.parent)
 
 
 @contextmanager

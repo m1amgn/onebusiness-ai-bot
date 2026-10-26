@@ -25,6 +25,7 @@ def test_main_init_records_actual_pid_without_building_clients(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("TASKBOT_WORKER_MAIN_PID", raising=False)
 
     def connect_nothing(*args: object, **kwargs: object) -> None:
         raise AssertionError("Main process built child resources")

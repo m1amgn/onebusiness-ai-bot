@@ -121,6 +121,20 @@ def test_process_role_and_extra_arguments_reach_exec(
     assert env["WORKER_ROLE"] == "notify"
 
 
+def test_notify_launcher_uses_the_child_namespace_in_its_schedule_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_NAMESPACE", "taskbot_test_0_01234567:t8:")
+    monkeypatch.setattr(os, "execve", lambda executable, argv, env: calls.append(argv))
+    launch(["notify"])
+    arguments = calls[0]
+    assert arguments[arguments.index("-s") + 1] == str(
+        Path(tempfile.gettempdir()) / "celerybeat-schedule-taskbot_test_0_01234567_t8_"
+    )
+
+
 def test_validation_errors_do_not_echo_secret_inputs(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

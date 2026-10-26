@@ -134,8 +134,10 @@ ConsumeRealtimeTicket also checks the current database token version without a c
 
 subscribe_user_events waits for Redis's subscription confirmation before yielding.
 UserEventSubscription.next returns raw event JSON or None after a healthy idle check.
-EventStreamGapError identifies a reconnect; all Redis/timeout failures become
-EventStreamError. A consumer closes its stream and refetches state after either error.
+EventStreamGapError identifies a reconnect; Redis/timeout failures in adapter operations
+become EventStreamError. Consumer-body exceptions retain their identity. Exit cleanup
+survives repeated cancellation within its operation timeouts, then propagates cancellation.
+A consumer closes its stream and refetches state after either stream error.
 Events received during the idle PING remain deliverable. S6 owns SSE and revocation checks.
 
 RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
@@ -180,8 +182,10 @@ Use tests/workers.py for real-worker tests. Every worker needs its own test chil
 namespace, /dev/null dotenv, no Telegram token and a closed-port fake database URL.
 Test-only hooks/tasks stay in tests/worker_tasks.py, included explicitly. Worker
 output goes to owned files. Teardown sends SIGTERM only to the main PID, allows
-warm shutdown, kills the whole group on timeout and proves no group survives.
-Remove owned beat base/WAL/SHM files. Never run an unfinished worker against the
+warm shutdown, records leftover members before cleanup, and rejects any forced stop.
+It kills residual owned groups in a finalizer. Beat runs in a private temporary directory;
+verify its namespaced schedule while it runs and remove owned base/WAL/SHM files.
+Never run an unfinished worker against the
 unnamespaced shared development queues; without S5 handlers it discards real jobs.
 S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification.
 

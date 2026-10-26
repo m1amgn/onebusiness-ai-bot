@@ -62,6 +62,8 @@ async def test_warm_main_term_finishes_task_and_removes_beat(
 ) -> None:
     log = tmp_path / "tasks.jsonl"
     async with running_worker(role, redis_session.child(), log_dir=tmp_path) as worker:
+        if role == "notify":
+            await worker.assert_owned_beat_schedule()
         await worker.send("s3test.sleep", seconds=3, marker="warm", log=str(log))
         await wait_records(log, "start")
         os.kill(worker.pid, signal.SIGTERM)
@@ -79,14 +81,16 @@ async def test_replacement_waits_six_seconds_then_redelivers_only_once(
 ) -> None:
     # TASKBOT_TEST_ALIVE_TIMEOUT=4 is the executed negative control for this same case.
     log = tmp_path / "tasks.jsonl"
-    timeout = int(os.environ.get("TASKBOT_TEST_ALIVE_TIMEOUT", "30"))
+    timeout = os.environ.get("TASKBOT_TEST_ALIVE_TIMEOUT")
     async with running_worker(
         "transcribe",
         redis_session.child(),
         log_dir=tmp_path,
         replacement_delay=6,
-        alive_timeout=timeout,
+        alive_timeout=int(timeout) if timeout is not None else None,
     ) as worker:
+        if timeout is None:
+            assert "TASKBOT_TEST_ALIVE_TIMEOUT" not in worker.env
         await worker.send("s3test.sleep", seconds=3, marker="redelivery", log=str(log))
         rows = await wait_records(log, "start")
         os.kill(int(str(rows[0]["pid"])), signal.SIGKILL)

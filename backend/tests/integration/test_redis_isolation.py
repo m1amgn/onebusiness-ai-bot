@@ -77,9 +77,22 @@ async def test_session_cleans_all_adapters_both_databases_and_owner_last() -> No
 
 
 OWNER_SCRIPT = """
-import asyncio, json
+import asyncio, json, os, signal, threading, time
 from taskbot.infrastructure.redis.client import create_redis_client
 from tests.redis_sessions import open_redis_session
+actual_parent = os.getppid()
+parent = int(os.environ['TASKBOT_TEST_OWNER_PARENT_PID'])
+def watch_parent():
+    while True:
+        time.sleep(0.2)
+        try:
+            os.kill(parent, 0)
+        except ProcessLookupError:
+            break
+        if os.getppid() != actual_parent:
+            break
+    os.kill(os.getpid(), signal.SIGTERM)
+threading.Thread(target=watch_parent, daemon=True).start()
 async def main():
     async with open_redis_session() as session:
         async with create_redis_client(session.redis_url, client_name=session.id) as client:
@@ -93,7 +106,9 @@ asyncio.run(main())
 
 
 @asynccontextmanager
-async def redis_owner() -> AsyncIterator[tuple[subprocess.Popen[bytes], str]]:
+async def redis_owner(
+    *, parent_pid: int | None = None
+) -> AsyncIterator[tuple[subprocess.Popen[bytes], str]]:
     process = await asyncio.to_thread(
         subprocess.Popen,
         [sys.executable, "-c", OWNER_SCRIPT],
@@ -101,6 +116,7 @@ async def redis_owner() -> AsyncIterator[tuple[subprocess.Popen[bytes], str]]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        env={**os.environ, "TASKBOT_TEST_OWNER_PARENT_PID": str(parent_pid or os.getpid())},
     )
     session_id: str | None = None
     try:
@@ -113,21 +129,61 @@ async def redis_owner() -> AsyncIterator[tuple[subprocess.Popen[bytes], str]]:
         if process.poll() is None:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-        await asyncio.to_thread(process.communicate)
+        await asyncio.wait_for(asyncio.to_thread(process.communicate), 5)
         if session_id is not None:
             await drop_abandoned_namespaces(
                 datetime.now(UTC) + timedelta(hours=7), ids={session_id}
             )
 
 
-async def assert_sweep_keeps_paused_owner(session_id: str, future: datetime) -> None:
-    assert await drop_abandoned_namespaces(future, ids={session_id}) == []
+async def test_redis_owner_exits_when_its_simulated_parent_dies() -> None:
+    parent = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        start_new_session=True,
+    )
+    try:
+        async with redis_owner(parent_pid=parent.pid) as (owner, session_id):
+            parent.terminate()
+            await asyncio.wait_for(parent.wait(), 5)
+            await asyncio.to_thread(owner.wait, timeout=3)
+            assert session_id in await drop_abandoned_namespaces(
+                datetime.now(UTC) + timedelta(hours=7), ids={session_id}
+            )
+            assert await keys_for(session_id) == []
+            assert not session_lock_path(session_id).exists()
+    finally:
+        with suppress(ProcessLookupError):
+            os.killpg(parent.pid, signal.SIGKILL)
+        await asyncio.wait_for(parent.wait(), 5)
+
+
+async def test_disconnected_owner_proof_rejects_a_missing_connection() -> None:
+    async with redis_owner() as (owner, session_id):
+        os.kill(owner.pid, signal.SIGSTOP)
+        assert await kill_owner_connections(session_id) > 0
+        with pytest.raises(AssertionError, match="owner connection"):
+            await assert_sweep_keeps_paused_owner(
+                session_id, datetime.now(UTC) + timedelta(hours=7)
+            )
+
+
+async def kill_owner_connections(session_id: str) -> int:
     settings = InfraTestSettings()
+    killed = 0
     for url in (str(settings.redis_url), settings.broker_url):
         async with create_redis_client(url) as control:
             for connection in await control.client_list():
                 if connection["name"] == session_id:
-                    await control.client_kill_filter(_id=connection["id"])
+                    killed += await control.client_kill_filter(_id=connection["id"])
+    return killed
+
+
+async def assert_sweep_keeps_paused_owner(session_id: str, future: datetime) -> None:
+    assert await drop_abandoned_namespaces(future, ids={session_id}) == []
+    killed = await kill_owner_connections(session_id)
+    assert killed > 0, "The paused-owner proof must kill at least one owner connection"
     assert await drop_abandoned_namespaces(future, ids={session_id}) == []
     script = (
         "import asyncio; from datetime import datetime; "

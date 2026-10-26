@@ -1,7 +1,7 @@
 import asyncio
 from collections import deque
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
@@ -86,6 +86,24 @@ class UserEventSubscription:
             raise EventStreamError("Redis event stream is unavailable") from error
 
     async def close(self) -> None:
+        # A separate task is outside the consumer's cancellation scope. Keep waiting
+        # through repeated cancellation; the two operation timeouts still bound it.
+        cleanup = asyncio.create_task(self._close_connection())
+        cancellation: asyncio.CancelledError | None = None
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+            except RedisError, TimeoutError:
+                break
+        if cancellation is not None:
+            with suppress(RedisError, TimeoutError):
+                cleanup.result()
+            raise cancellation
+        cleanup.result()
+
+    async def _close_connection(self) -> None:
         try:
             async with asyncio.timeout(1):
                 await self._pubsub.unsubscribe(self._channel)
@@ -102,11 +120,11 @@ async def subscribe_user_events(
     subscription = UserEventSubscription(client.pubsub(), user_channel(namespace, user_id))
     failed = False
     try:
-        await subscription.confirm()
+        try:
+            await subscription.confirm()
+        except (RedisError, TimeoutError) as error:
+            raise EventStreamError("Redis event subscription is unavailable") from error
         yield subscription
-    except (RedisError, TimeoutError) as error:
-        failed = True
-        raise EventStreamError("Redis event subscription is unavailable") from error
     except BaseException:
         failed = True
         raise
@@ -116,3 +134,6 @@ async def subscribe_user_events(
         except (RedisError, TimeoutError) as error:
             if not failed:
                 raise EventStreamError("Redis event subscription could not close") from error
+        except asyncio.CancelledError:
+            if not failed:
+                raise
