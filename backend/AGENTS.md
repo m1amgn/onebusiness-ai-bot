@@ -34,6 +34,10 @@ keep anthropic and httpx2 loggers at WARNING after SDK import to protect chat te
 The English system rules and four synthetic examples live in extraction/prompt.py.
 Keep the prompt at least 2600 characters for the cache prefix. Check prompt changes
 with the owner-controlled live replay; examples are not the acceptance messages.
+Run it from root with yarn live:extraction --thinking disabled|adaptive, one mode
+per process. It makes eight paid calls, checks fixed A1-A8 facts and cache hits,
+and prints usage/latency. Gist and added facts need manual review. Normal verify
+only runs its offline checker/configuration tests and never calls the provider.
 
 Test service doubles live in tests/fakes. The read-only owner-row replay is
 `uv run --locked --directory backend python tests/acceptance/replay_s2.py` from root.

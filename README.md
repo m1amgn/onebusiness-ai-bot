@@ -49,6 +49,7 @@ No API key or Telegram token is needed for the foundation checks.
 | `yarn dev:whisper` | Local whisper.cpp server on `http://127.0.0.1:8178` |
 | `yarn db:migrate` | Upgrade the database schema to the latest Alembic revision |
 | `yarn --silent dev:seed <telegram_user_id> [text …]` | Create tasks, rotate the dashboard token and publish events |
+| `yarn --silent live:extraction --thinking disabled\|adaptive` | Paid, opt-in replay of eight synthetic messages with Claude |
 | `yarn dev:worker transcribe` / `yarn dev:worker notify` | Start the prefork worker roles; notify also runs beat |
 | `yarn dev:bot` | Bot; currently fails naming stage S4 |
 
@@ -86,9 +87,43 @@ redis-cli -u redis://localhost:6379/0 PSUBSCRIBE 'events:user:*'
 Use the configured `REDIS_URL` if it differs from this default. With Redis
 unreachable, the seed waits up to about one second, logs one failed publication
 batch and still prints the committed token and link. It skips the remaining
-events in that batch. The CLI closes its Redis client and SQL engine on exit.
+events in that batch. The CLI closes its extractor, Redis client and SQL engine on exit.
 The seed publisher and root command were verified against real local stores with
 synthetic tasks, an owned test database and a private Redis namespace.
+
+## Claude extraction
+
+The default `TASK_EXTRACTOR=heuristic` needs no provider key. To use Claude, set
+`TASK_EXTRACTOR=claude` and `ANTHROPIC_API_KEY` in the untracked root `.env`.
+`ANTHROPIC_MODEL` defaults to `claude-haiku-5-5`. Keep real keys out of git.
+Apply `yarn db:migrate` before starting code that writes descriptions longer than
+2000 characters; the current limit is 4096, with a 120-character title.
+
+Claude returns one task per message, including lists and greetings. It writes a
+short title and a clean description in the source language, preserving facts and
+removing filler. The original message stays stored. Provider failures use the
+heuristic marked `degraded`; missing or blank keys do the same. Each call has one
+attempt and a whole-call deadline. The seed uses 30 seconds; the bot and worker
+stages use 8 and 30 seconds respectively. Usage and latency logs exclude chat text.
+
+The owner-controlled replay makes eight paid API calls per command. It reads the
+fixed synthetic A1-A8 rows in `backend/tests/acceptance/s9_rows.json`, writes no
+database data and is outside `yarn verify`. Run each mode in its own process:
+
+```sh
+yarn --silent live:extraction --thinking disabled
+yarn --silent live:extraction --thinking adaptive
+```
+
+The command refuses missing `TASK_EXTRACTOR=claude` or `ANTHROPIC_API_KEY`. It prints
+one JSON line per row with the task, extractor, degraded flag, failure reason,
+latency and four usage counts. Usage is `null` when no completed response was
+logged; a timeout may still incur provider charges. It checks preserved facts,
+filler removal, the injected-title refusal and cache hits after the first row.
+Failures name the row and check on stderr and produce a nonzero exit status.
+An adaptive-mode deadline fallback is recorded as `degraded: true` with reason
+`timeout` and counts as evidence against that mode. Read each result to judge its
+gist and confirm that the model added no facts. Prompt changes need this replay.
 
 ## Workers
 
