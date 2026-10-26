@@ -1,12 +1,117 @@
 import os
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
+from taskbot.entrypoints.seed import SeedPorts, SeedResult
+from taskbot.entrypoints.seed import __main__ as seed_cli
 from tests.processes import run_process
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+@dataclass
+class CliResources:
+    closed: list[str] = field(default_factory=list)
+    fail_close: bool = False
+
+    async def aclose(self) -> None:
+        self.closed.append("redis")
+        if self.fail_close:
+            raise RuntimeError("Redis close failed")
+
+    async def dispose(self) -> None:
+        self.closed.append("engine")
+
+
+@pytest.fixture
+def resources(monkeypatch: pytest.MonkeyPatch) -> CliResources:
+    monkeypatch.setenv("TASKBOT_ENV_FILE", "/dev/null")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://unused/test")
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+    monkeypatch.setenv("REDIS_NAMESPACE", "taskbot_test_1_ab12cd34:t1:")
+    monkeypatch.setenv("TASK_EXTRACTOR", "heuristic")
+    owned = CliResources()
+    monkeypatch.setattr(seed_cli, "create_engine_and_sessions", lambda url: (owned, object()))
+    monkeypatch.setattr(seed_cli, "create_redis_client", lambda url: owned, raising=False)
+    return owned
+
+
+async def successful_seed(
+    ports: SeedPorts, telegram_user_id: int, text: str, message_id: int
+) -> SeedResult:
+    assert telegram_user_id == 1001
+    assert message_id < 0
+    return SeedResult(
+        user_id=7,
+        titles=(text,),
+        token="synthetic-token",
+        link="http://localhost:5173/#token=synthetic-token",
+        duplicate=False,
+        events=(),
+    )
+
+
+async def test_seed_cli_prints_namespaced_internal_user_channel_and_closes_resources(
+    resources: CliResources,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(seed_cli, "seed", successful_seed)
+    await seed_cli.run(1001, "Synthetic task")
+    assert resources.closed == ["redis", "engine"]
+    output = capsys.readouterr().out
+    assert "Events channel: taskbot_test_1_ab12cd34:t1:events:user:7\n" in output
+    assert "Token: synthetic-token\n" in output
+    assert "Link: http://localhost:5173/#token=synthetic-token\n" in output
+
+
+async def test_seed_cli_closes_resources_when_seed_raises(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_seed(*args: object) -> SeedResult:
+        raise RuntimeError("Seed failed")
+
+    monkeypatch.setattr(seed_cli, "seed", fail_seed)
+    with pytest.raises(RuntimeError, match="Seed failed"):
+        await seed_cli.run(1001, "Synthetic task")
+    assert resources.closed == ["redis", "engine"]
+
+
+async def test_seed_cli_disposes_engine_when_redis_construction_fails(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_client(url: str) -> None:
+        raise RuntimeError("Redis construction failed")
+
+    monkeypatch.setattr(seed_cli, "create_redis_client", fail_client)
+    with pytest.raises(RuntimeError, match="Redis construction failed"):
+        await seed_cli.run(1001, "Synthetic task")
+    assert resources.closed == ["engine"]
+
+
+async def test_seed_cli_closes_resources_when_port_construction_fails(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_ports(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("Port construction failed")
+
+    monkeypatch.setattr(seed_cli, "build_seed_ports", fail_ports)
+    with pytest.raises(RuntimeError, match="Port construction failed"):
+        await seed_cli.run(1001, "Synthetic task")
+    assert resources.closed == ["redis", "engine"]
+
+
+async def test_seed_cli_disposes_engine_even_if_redis_close_fails(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resources.fail_close = True
+    monkeypatch.setattr(seed_cli, "seed", successful_seed)
+    with pytest.raises(RuntimeError, match="Redis close failed"):
+        await seed_cli.run(1001, "Synthetic task")
+    assert resources.closed == ["redis", "engine"]
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "9223372036854775808", "abc"])
@@ -21,4 +126,23 @@ async def test_seed_refuses_invalid_user_id_before_settings_or_database(value: s
     )
     assert result.returncode == 2
     assert "positive 64-bit integer" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+async def test_seed_configuration_error_hides_invalid_secret_input() -> None:
+    result = await run_process(
+        sys.executable,
+        "-m",
+        "taskbot.entrypoints.seed",
+        "1001",
+        cwd=BACKEND_ROOT,
+        env=dict(
+            os.environ,
+            TASKBOT_ENV_FILE="/dev/null",
+            DATABASE_URL="https://test:synthetic-secret@invalid",
+        ),
+    )
+    assert result.returncode == 2
+    assert "Invalid configuration: DATABASE_URL" in result.stderr
+    assert "synthetic-secret" not in result.stderr
     assert "Traceback" not in result.stderr

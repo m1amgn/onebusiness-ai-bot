@@ -2,9 +2,13 @@ import argparse
 import asyncio
 import logging
 import time
+from contextlib import AsyncExitStack
 
 from taskbot.domain.errors import DomainError
 from taskbot.entrypoints.seed import build_seed_ports, seed
+from taskbot.entrypoints.settings import load_settings
+from taskbot.infrastructure.redis.client import create_redis_client, user_channel
+from taskbot.infrastructure.redis.events import RedisEventPublisher
 from taskbot.infrastructure.settings.seed import SeedSettings
 from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
 from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
@@ -23,20 +27,24 @@ def positive_int64(value: str) -> int:
 
 
 async def run(telegram_user_id: int, text: str) -> None:
-    settings = SeedSettings()
+    settings = load_settings(SeedSettings)
     logging.basicConfig(level=settings.log_level)
-    engine, sessions = create_engine_and_sessions(str(settings.database_url))
+    async with AsyncExitStack() as resources:
+        engine, sessions = create_engine_and_sessions(str(settings.database_url))
+        resources.push_async_callback(engine.dispose)
+        client = create_redis_client(str(settings.redis_url))
+        resources.push_async_callback(client.aclose)
 
-    def uows() -> SqlAlchemyUnitOfWork:
-        return SqlAlchemyUnitOfWork(sessions)
+        def uows() -> SqlAlchemyUnitOfWork:
+            return SqlAlchemyUnitOfWork(sessions)
 
-    try:
         result = await seed(
-            build_seed_ports(settings, uows), telegram_user_id, text, -(time.time_ns() // 1000)
-        )
-        # S3 binds publish_events here; all returned events already belong to committed work.
-        logging.getLogger(__name__).info(
-            "%d events not published (no publisher until S3)", len(result.events)
+            build_seed_ports(
+                settings, uows, publisher=RedisEventPublisher(client, settings.redis_namespace)
+            ),
+            telegram_user_id,
+            text,
+            -(time.time_ns() // 1000),
         )
         if result.duplicate:
             print("Message already seeded.")
@@ -44,9 +52,8 @@ async def run(telegram_user_id: int, text: str) -> None:
             print(f"Title: {title}")
         print(f"Token: {result.token}")
         print(f"Link: {result.link}")
+        print(f"Events channel: {user_channel(settings.redis_namespace, result.user_id)}")
         print("Older dashboard links stop working after every seed run.")
-    finally:
-        await engine.dispose()
 
 
 def main() -> None:

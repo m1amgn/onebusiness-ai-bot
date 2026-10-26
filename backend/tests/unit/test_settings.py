@@ -8,7 +8,19 @@ from tests.settings import SampleSettings
 
 @pytest.fixture(autouse=True)
 def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("TASK_EXTRACTOR", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "LOG_LEVEL"):
+    for key in (
+        "TASK_EXTRACTOR",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "LOG_LEVEL",
+        "REDIS_URL",
+        "CELERY_BROKER_URL",
+        "REDIS_NAMESPACE",
+        "WORKER_ROLE",
+        "TELEGRAM_BOT_TOKEN",
+        "DATABASE_URL",
+        "TASKBOT_ENV_FILE",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 

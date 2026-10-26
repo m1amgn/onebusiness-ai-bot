@@ -5,6 +5,7 @@ from dotenv import dotenv_values
 
 from taskbot.infrastructure.settings.migration import MigrationSettings
 from taskbot.infrastructure.settings.seed import SeedSettings
+from taskbot.infrastructure.settings.worker import BrokerSettings, WorkerSettings
 from tests.integration.settings import InfraTestSettings
 from tests.settings import SampleSettings
 
@@ -14,7 +15,14 @@ def test_example_environment_validates_and_contains_no_credentials(
 ) -> None:
     example = Path(__file__).resolve().parents[3] / ".env.example"
     values = dotenv_values(example)
-    settings_types = (SampleSettings, InfraTestSettings, MigrationSettings, SeedSettings)
+    settings_types = (
+        SampleSettings,
+        InfraTestSettings,
+        MigrationSettings,
+        SeedSettings,
+        BrokerSettings,
+        WorkerSettings,
+    )
     for settings_type in settings_types:
         for name, field in settings_type.model_fields.items():
             key = name.upper()
@@ -35,3 +43,5 @@ def test_example_environment_validates_and_contains_no_credentials(
     assert InfraTestSettings(_env_file=example).database_url.hosts()[0]["host"] == "localhost"
     MigrationSettings(_env_file=example)
     SeedSettings(_env_file=example)
+    BrokerSettings(_env_file=example)
+    WorkerSettings(_env_file=example)

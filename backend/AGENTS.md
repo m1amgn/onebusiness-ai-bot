@@ -73,13 +73,21 @@ checks use tests.processes.run_process, which kills the whole group on timeout.
 ## Seed entry point
 
 Root yarn dev:seed runs entrypoints/seed. Its composition root binds validated
-SeedSettings, SQL units of work, clock, extractor and token adapters. The reusable
-seed function invokes standalone task creation and token issue; duplicate messages
-still rotate the token. CLI message ids are negative microsecond timestamps to
-avoid real Telegram ids. The CLI validates user ids as positive signed int64 values
-before it loads settings. Print tokens only in this explicit development output;
-result representations hide token/link. One post-commit call site currently logs
-unpublished events; S3 connects publish_events there. Always dispose the engine.
+SeedSettings, SQL units of work, clock, extractor and token adapters. The CLI owns
+the Redis client and engine; register their cleanup immediately after construction.
+AsyncExitStack closes Redis before the engine and attempts both even if one fails.
+The CLI constructs RedisEventPublisher and passes it as build_seed_ports's explicit
+publisher keyword; SeedPorts contains no owned client. The reusable seed function
+invokes standalone task creation and token issue, then publish_events once after
+both commits. Duplicate messages still rotate the token and publish auth.revoked.
+Publication failure preserves the tasks, token and link and logs one failed batch.
+
+SeedResult.user_id comes from the token issue result's authoritative internal user
+id. Print its namespaced user_channel, never the Telegram id. CLI message ids are
+negative microsecond timestamps to avoid real Telegram ids. The CLI validates user
+ids as positive signed int64 values before it loads settings. Use load_settings to
+report configuration errors without echoing secret inputs. Print tokens only in
+this explicit development output; result representations hide token/link.
 
 ## Settings
 
@@ -104,8 +112,14 @@ The shared stack belongs to the machine. Leave it running; never delete its volu
 Each writing test session creates `taskbot_test_<unix-time>_<random>`, applies
 schema/migrations and drops its database. S2 owns that fixture and stale cleanup.
 Tests never write to the development database. Each Redis session uses unique
-prefixes for keys, channels, locks and Celery queues and removes its own keys;
-S3 owns that fixture. No test assumes exclusive use. S1's tests only read.
+prefixes for keys, channels, locks and Celery queues and removes its own keys.
+The redis_session fixture owns its namespace and returns a fresh child string per
+writing test through redis_session.child(). Cleanup scans only <session-id>:* in
+both application and broker databases. A same-host owner record and a process-held
+file lock prove abandoned ownership. Missing records, corrupt records, other hosts
+and missing/noncanonical lock paths retain keys; they require manual owner cleanup.
+Use SCAN MATCH taskbot_test_* to inspect retained records; age alone never permits
+deletion. No test assumes exclusive use. S1's tests only read.
 
 ## API schema and image
 
@@ -114,3 +128,76 @@ TypeScript and Zod files are never edited by hand. `yarn api:check` detects drif
 Route names become OpenAPI operation ids; choose unique names.
 A stage that adds dependencies or a top-level backend directory, such as
 `alembic/`, reruns the backend smoke build and records its result.
+
+## Redis adapters
+
+Build asynchronous clients through infrastructure/redis/client.py. Names use namespaced
+or user_channel; event routing uses internal users.id. RedisEventPublisher bounds a
+publish to one second. publish_events stops a batch after its first publication failure.
+RedisTicketStore issues 30-second, single-use tickets with SET NX EX and GETDEL;
+ConsumeRealtimeTicket also checks the current database token version without a commit.
+
+subscribe_user_events waits for Redis's subscription confirmation before yielding.
+UserEventSubscription.next returns raw event JSON or None after a healthy idle check.
+EventStreamGapError identifies a reconnect; Redis/timeout failures in adapter operations
+become EventStreamError. Consumer-body exceptions retain their identity. Exit cleanup
+survives repeated cancellation within its operation timeouts, then propagates cancellation.
+A consumer closes its stream and refetches state after either stream error.
+Events received during the idle PING remain deliverable. S6 owns SSE and revocation checks.
+
+RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
+SeedSettings includes this mixin. The read-only owner replay is
+`uv run --locked --directory backend python tests/acceptance/replay_s3.py` from root.
+It verifies optional tokens, refused worker roles and the empty-namespace channel
+rule. It starts no worker and connects to no store; live seed tests prove publication.
+TASKBOT_ENV_FILE overrides the root dotenv file at settings construction; explicit
+_env_file=None still disables dotenv loading for in-process tests.
+
+## Celery producer
+
+create_celery_app builds connection-free shared configuration and routes from the
+domain job classes. CeleryJobQueue serializes those models as JSON and publishes on
+its dedicated four-thread executor. It resolves producer_pool before threaded use.
+Negative countdowns are refused; countdowns above 600 seconds are clamped and logged
+at debug. OperationalError becomes EnqueueError with its cause preserved.
+Call the queue's synchronous close() before child shutdown closes loop-owned clients;
+it waits for running sends and cancels executor work that has not started. Cancellation
+of an enqueue awaiter does not stop an already-running broker operation. Broker socket
+timeouts and bounded retries limit those operations; queued sends add executor batches.
+
+## Worker runtime
+
+Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
+launcher. It execs Celery; notify also owns beat. Role selection reads the first
+argument or process WORKER_ROLE, never dotenv. BrokerSettings is connection-free;
+WorkerSettings requires role and DATABASE_URL, with no provider settings and an
+optional Telegram token. Startup validation prints variable names without input
+values. On macOS the launcher adds FORKED_BY_MULTIPROCESSING=1; direct prefork
+without it is refused.
+
+The main process records its actual PID and connects no clients. Each pool child
+owns one event loop and WorkerContainer. Register each resource in that owner as
+soon as it is built; a builder failure must leave partial resources reachable for
+cleanup. start_child catches BaseException, closes resources independently,
+signals only its still-recorded actual parent, then always os._exit(70). Tasks use
+runtime.run_async; interrupted coroutines are cancelled and drained before reuse.
+Shutdown closes the job queue synchronously before Redis and the SQL engine.
+
+Use tests/workers.py for real-worker tests. Every worker needs its own test child
+namespace, /dev/null dotenv, no Telegram token and a closed-port fake database URL.
+Test-only hooks/tasks stay in tests/worker_tasks.py, included explicitly. Worker
+output goes to owned files. Teardown sends SIGTERM only to the main PID, allows
+warm shutdown, records leftover members before cleanup, and rejects any forced stop.
+It kills residual owned groups in a finalizer. Beat runs in a private temporary directory;
+verify its namespaced schedule while it runs and remove owned base/WAL/SHM files.
+Never run an unfinished worker against the
+unnamespaced shared development queues; without S5 handlers it discards real jobs.
+S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification.
+
+Celery 5.6 embedded Beat protects sys.__stdin__ when closing inherited descriptors,
+but Billiard first replaces sys.stdin. The worker-only compat fixup registers a
+public after-fork callback that aligns those wrappers in Beat before descriptor
+closure. Celery serializes the fixup for spawned apps. Pool children and producer
+apps do not change their streams. Keep completed notify TERM/Ctrl-C logs free of
+bad-descriptor finalization errors; remove this compatibility fix when the pinned
+SDKs preserve the live wrapper themselves.

@@ -1,10 +1,10 @@
-from pydantic import PostgresDsn, RedisDsn
+from pydantic import PostgresDsn
 
 from taskbot.infrastructure.settings import BaseAppSettings
+from taskbot.infrastructure.settings.redis import RedisSettingsMixin
 
 
-class InfraTestSettings(BaseAppSettings):
+class InfraTestSettings(BaseAppSettings, RedisSettingsMixin):
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+asyncpg://taskbot:taskbot@localhost:5432/taskbot"
     )
-    redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")

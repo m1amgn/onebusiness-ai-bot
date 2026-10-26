@@ -198,7 +198,7 @@ async def test_token_rotation_rejects_old_and_malformed_tokens() -> None:
     assert store.calls.items == before
 
 
-async def test_publishing_continues_after_failure() -> None:
+async def test_publishing_stops_after_first_failure(caplog: pytest.LogCaptureFixture) -> None:
 
     delivered: list[int] = []
 
@@ -208,8 +208,10 @@ async def test_publishing_continues_after_failure() -> None:
             if event.user_id == 1:
                 raise RuntimeError("publisher down")
 
-    await publish_events(Publisher(), (AuthRevoked(user_id=1), AuthRevoked(user_id=2)))
-    assert delivered == [1, 2]
+    await publish_events(Publisher(), tuple(AuthRevoked(user_id=i) for i in (1, 2, 3)))
+    assert delivered == [1]
+    assert len(caplog.records) == 1
+    assert "skipped 2" in caplog.records[0].getMessage()
 
 
 @pytest.mark.parametrize("failure", ["messages.add", "tasks.add_many", "commit"])
