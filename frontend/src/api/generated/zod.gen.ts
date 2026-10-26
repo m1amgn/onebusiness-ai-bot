@@ -49,7 +49,7 @@ export const zTaskStatusChange = z.object({
  */
 export const zTaskView = z.object({
   created_at: z.iso.datetime(),
-  description: z.string().max(2000),
+  description: z.string().max(4096),
   id: z.int(),
   inbound_message_id: z.int(),
   position: z.int(),

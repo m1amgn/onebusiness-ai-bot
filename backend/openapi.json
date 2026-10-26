@@ -209,7 +209,7 @@
             "type": "string"
           },
           "description": {
-            "maxLength": 2000,
+            "maxLength": 4096,
             "title": "Description",
             "type": "string"
           },

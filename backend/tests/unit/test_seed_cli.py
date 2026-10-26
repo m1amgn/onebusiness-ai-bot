@@ -1,12 +1,19 @@
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
-from taskbot.entrypoints.seed import SeedPorts, SeedResult
+from taskbot.domain.ports.messaging import EventPublisher
+from taskbot.domain.ports.persistence import UnitOfWorkFactory
+from taskbot.domain.ports.services import TaskExtractor
+from taskbot.entrypoints.seed import SeedPorts, SeedResult, build_seed_ports
 from taskbot.entrypoints.seed import __main__ as seed_cli
+from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
+from taskbot.infrastructure.settings.seed import SeedSettings
 from tests.processes import run_process
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +23,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 class CliResources:
     closed: list[str] = field(default_factory=list)
     fail_close: bool = False
+    extractor: HeuristicExtractor = field(default_factory=HeuristicExtractor)
 
     async def aclose(self) -> None:
         self.closed.append("redis")
@@ -36,6 +44,18 @@ def resources(monkeypatch: pytest.MonkeyPatch) -> CliResources:
     owned = CliResources()
     monkeypatch.setattr(seed_cli, "create_engine_and_sessions", lambda url: (owned, object()))
     monkeypatch.setattr(seed_cli, "create_redis_client", lambda url: owned, raising=False)
+
+    @asynccontextmanager
+    async def open_extractor(
+        settings: SeedSettings, *, deadline_seconds: float
+    ) -> AsyncIterator[HeuristicExtractor]:
+        assert deadline_seconds == 30
+        try:
+            yield owned.extractor
+        finally:
+            owned.closed.append("extractor")
+
+    monkeypatch.setattr(seed_cli, "open_extractor", open_extractor, raising=False)
     return owned
 
 
@@ -54,6 +74,28 @@ async def successful_seed(
     )
 
 
+async def test_seed_cli_passes_the_opened_extractor_to_port_construction(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[TaskExtractor] = []
+
+    def capture_build_seed_ports(
+        settings: SeedSettings,
+        uows: UnitOfWorkFactory,
+        extractor: TaskExtractor,
+        *,
+        publisher: EventPublisher,
+    ) -> SeedPorts:
+        observed.append(extractor)
+        return build_seed_ports(settings, uows, extractor, publisher=publisher)
+
+    monkeypatch.setattr(seed_cli, "build_seed_ports", capture_build_seed_ports)
+    monkeypatch.setattr(seed_cli, "seed", successful_seed)
+    await seed_cli.run(1001, "Synthetic task")
+    assert len(observed) == 1
+    assert observed[0] is resources.extractor
+
+
 async def test_seed_cli_prints_namespaced_internal_user_channel_and_closes_resources(
     resources: CliResources,
     monkeypatch: pytest.MonkeyPatch,
@@ -61,7 +103,7 @@ async def test_seed_cli_prints_namespaced_internal_user_channel_and_closes_resou
 ) -> None:
     monkeypatch.setattr(seed_cli, "seed", successful_seed)
     await seed_cli.run(1001, "Synthetic task")
-    assert resources.closed == ["redis", "engine"]
+    assert resources.closed == ["extractor", "redis", "engine"]
     output = capsys.readouterr().out
     assert "Events channel: taskbot_test_1_ab12cd34:t1:events:user:7\n" in output
     assert "Token: synthetic-token\n" in output
@@ -77,7 +119,7 @@ async def test_seed_cli_closes_resources_when_seed_raises(
     monkeypatch.setattr(seed_cli, "seed", fail_seed)
     with pytest.raises(RuntimeError, match="Seed failed"):
         await seed_cli.run(1001, "Synthetic task")
-    assert resources.closed == ["redis", "engine"]
+    assert resources.closed == ["extractor", "redis", "engine"]
 
 
 async def test_seed_cli_disposes_engine_when_redis_construction_fails(
@@ -101,7 +143,7 @@ async def test_seed_cli_closes_resources_when_port_construction_fails(
     monkeypatch.setattr(seed_cli, "build_seed_ports", fail_ports)
     with pytest.raises(RuntimeError, match="Port construction failed"):
         await seed_cli.run(1001, "Synthetic task")
-    assert resources.closed == ["redis", "engine"]
+    assert resources.closed == ["extractor", "redis", "engine"]
 
 
 async def test_seed_cli_disposes_engine_even_if_redis_close_fails(
@@ -110,6 +152,22 @@ async def test_seed_cli_disposes_engine_even_if_redis_close_fails(
     resources.fail_close = True
     monkeypatch.setattr(seed_cli, "seed", successful_seed)
     with pytest.raises(RuntimeError, match="Redis close failed"):
+        await seed_cli.run(1001, "Synthetic task")
+    assert resources.closed == ["extractor", "redis", "engine"]
+
+
+async def test_seed_cli_closes_redis_and_engine_when_extractor_construction_fails(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @asynccontextmanager
+    async def fail_extractor(
+        settings: SeedSettings, *, deadline_seconds: float
+    ) -> AsyncIterator[HeuristicExtractor]:
+        raise RuntimeError("Extractor construction failed")
+        yield HeuristicExtractor()
+
+    monkeypatch.setattr(seed_cli, "open_extractor", fail_extractor)
+    with pytest.raises(RuntimeError, match="Extractor construction failed"):
         await seed_cli.run(1001, "Synthetic task")
     assert resources.closed == ["redis", "engine"]
 

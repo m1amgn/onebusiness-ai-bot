@@ -14,6 +14,7 @@ from taskbot.domain.errors import InvalidTokenError
 from taskbot.domain.events import DomainEvent
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.entrypoints.seed import build_seed_ports, seed
+from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
 from taskbot.infrastructure.redis.client import create_redis_client
 from taskbot.infrastructure.settings.seed import SeedSettings
 from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
@@ -55,7 +56,7 @@ async def test_seed_rotates_tokens_and_handles_duplicate_messages(
         _env_file=None, database_url=PostgresDsn("postgresql+asyncpg://unused/test")
     )
     publisher = CommittedPublisher(postgres_uows)
-    ports = build_seed_ports(settings, postgres_uows, publisher=publisher)
+    ports = build_seed_ports(settings, postgres_uows, HeuristicExtractor(), publisher=publisher)
     first = await seed(ports, 1001, MESSAGE, -1)
     assert first.titles == (MESSAGE,)
     assert not first.duplicate
@@ -92,7 +93,10 @@ async def test_failed_seed_publication_preserves_committed_tasks_and_token(
     publisher = FakeEventPublisher(fail=True)
     with caplog.at_level(logging.ERROR, logger="taskbot.application.publishing"):
         result = await seed(
-            build_seed_ports(settings, postgres_uows, publisher=publisher), 1001, MESSAGE, -1
+            build_seed_ports(settings, postgres_uows, HeuristicExtractor(), publisher=publisher),
+            1001,
+            MESSAGE,
+            -1,
         )
     assert publisher.calls.items == ["events.publish"]
     records = [

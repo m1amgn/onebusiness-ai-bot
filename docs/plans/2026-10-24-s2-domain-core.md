@@ -1,6 +1,6 @@
 # S2 — Domain core and PostgreSQL persistence
 
-> **STATUS 2026-10-24: ACTIVE — stage design, round 4 (round 2: pre-handoff lens findings; round 3: the owner's extractor decisions S2-D5 and S2-D6; round 4: design gate round 1, G1 notification deferral and G2 strict task ordering; section 10), for the design gate.**
+> **STATUS 2026-10-24: ACTIVE — stage design, round 4 (round 2: pre-handoff lens findings; round 3: the owner's extractor decisions S2-D5 and S2-D6; round 4: design gate round 1, G1 notification deferral and G2 strict task ordering; section 10), for the design gate.** Superseded in part by `docs/plans/2026-10-26-s9-claude-extraction.md` (Y1, Y2, Y4, Y9): one task per message, `Extraction.task`, `open_extractor`, descriptions up to 4096 characters.
 
 Stage S2 of the umbrella design `docs/plans/2026-10-23-umbrella-assessment.md` (umbrella section 5, S2), read with its amendment 1 (umbrella section 12) and the S1 design `docs/plans/2026-10-24-s1-skeleton.md`. The umbrella fixes the scope; this document fixes how S2 delivers it, records the owner's decisions for this stage, and lists where S2 departs from the umbrella's text (section 9, rows X1–X13). "Umbrella x.y" names a section of the umbrella design; a bare number names a section of this document. The implementation steps are called S2.1 to S2.5.
 

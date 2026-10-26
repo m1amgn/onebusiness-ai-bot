@@ -18,7 +18,7 @@ class HeuristicExtractor:
         if len(description) > DESCRIPTION_MAX:
             description = description[: DESCRIPTION_MAX - 1] + "…"
         return Extraction(
-            tasks=(TaskDraft(title=title, description=description),),
+            task=TaskDraft(title=title, description=description),
             extractor=ExtractorName.HEURISTIC,
             degraded=self._degraded,
         )

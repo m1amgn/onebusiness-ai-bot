@@ -12,9 +12,9 @@ from taskbot.domain.events import DomainEvent
 from taskbot.domain.messages import MessageKind, MessageRef
 from taskbot.domain.ports.messaging import EventPublisher
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
+from taskbot.domain.ports.services import TaskExtractor
 from taskbot.domain.users import TelegramIdentity
 from taskbot.infrastructure.clock import SystemClock
-from taskbot.infrastructure.extraction.factory import build_extractor
 from taskbot.infrastructure.settings.seed import SeedSettings
 from taskbot.infrastructure.tokens import SecretsTokenGenerator, Sha256TokenHasher
 
@@ -38,12 +38,16 @@ class SeedResult:
 
 
 def build_seed_ports(
-    settings: SeedSettings, uows: UnitOfWorkFactory, *, publisher: EventPublisher
+    settings: SeedSettings,
+    uows: UnitOfWorkFactory,
+    extractor: TaskExtractor,
+    *,
+    publisher: EventPublisher,
 ) -> SeedPorts:
     clock = SystemClock()
     register = RegisterOrGetUser(uows, clock)
     return SeedPorts(
-        CreateTasksFromMessage(uows, build_extractor(settings), register, clock),
+        CreateTasksFromMessage(uows, extractor, register, clock),
         IssueDashboardToken(uows, register, SecretsTokenGenerator(), Sha256TokenHasher(), clock),
         settings.web_base_url,
         publisher,

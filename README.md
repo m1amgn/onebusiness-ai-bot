@@ -50,6 +50,7 @@ No API key or Telegram token is needed for the foundation checks.
 | `yarn dev:whisper` | Local whisper.cpp server on `http://127.0.0.1:8178` |
 | `yarn db:migrate` | Upgrade the database schema to the latest Alembic revision |
 | `yarn --silent dev:seed <telegram_user_id> [text …]` | Create tasks, rotate the dashboard token and publish events |
+| `yarn --silent live:extraction --thinking disabled\|adaptive` | Paid, opt-in replay of eight synthetic messages with Claude |
 | `yarn dev:worker transcribe` / `yarn dev:worker notify` | Start the prefork worker roles; notify also runs beat |
 | `yarn dev:bot` | Bot; currently fails naming stage S4 |
 
@@ -69,7 +70,7 @@ yarn --silent dev:seed 1001 "Call home and ask about the weekend."
 
 Without text, the seed uses a built-in English sample. The current fallback keeps
 one task per message, cuts its title to 120 characters and keeps longer text in
-the description. Only the later model extractor splits a message into tasks.
+the description.
 The seed stores tasks and prints the token and `<WEB_BASE_URL>/#token=…` link.
 Every run rotates the token, including a duplicate message, so older links stop
 working. After both database commits, it publishes one `task.created` per task,
@@ -87,9 +88,88 @@ redis-cli -u redis://localhost:6379/0 PSUBSCRIBE 'events:user:*'
 Use the configured `REDIS_URL` if it differs from this default. With Redis
 unreachable, the seed waits up to about one second, logs one failed publication
 batch and still prints the committed token and link. It skips the remaining
-events in that batch. The CLI closes its Redis client and SQL engine on exit.
+events in that batch. The CLI closes its extractor, Redis client and SQL engine on exit.
 The seed publisher and root command were verified against real local stores with
 synthetic tasks, an owned test database and a private Redis namespace.
+
+## Claude extraction
+
+The default `TASK_EXTRACTOR=heuristic` needs no provider key. To use Claude, set
+`TASK_EXTRACTOR=claude` and `ANTHROPIC_API_KEY` in the untracked root `.env`.
+`ANTHROPIC_MODEL` defaults to `claude-haiku-5-5`. Keep real keys out of git.
+Apply `yarn db:migrate` before starting code that writes descriptions longer than
+2000 characters; the current limit is 4096, with a 120-character title.
+
+Claude returns one task per message, including lists and greetings. It writes a
+short title and a clean description in the source language, preserving facts and
+removing filler. The original message stays stored. Provider failures use the
+heuristic marked `degraded`; missing or blank keys do the same. Each call has one
+attempt and a whole-call deadline. The seed uses 30 seconds; the bot and worker
+stages use 8 and 30 seconds respectively. Usage and latency logs exclude chat text.
+
+The owner-controlled replay makes eight paid API calls per command. It reads the
+fixed synthetic A1-A8 rows in `backend/tests/acceptance/s9_rows.json`, writes no
+database data and is outside `yarn verify`. Run each mode in its own process:
+
+```sh
+yarn --silent live:extraction --thinking disabled
+yarn --silent live:extraction --thinking adaptive
+```
+
+The command refuses missing `TASK_EXTRACTOR=claude` or `ANTHROPIC_API_KEY`. It prints
+one JSON line per row with the task, extractor, degraded flag, failure reason,
+latency and four usage counts. Usage is `null` when no completed response was
+logged; a timeout may still incur provider charges. It checks preserved facts,
+filler removal, the injected-title refusal and cache hits after the first row.
+Failures name the row and check on stderr and produce a nonzero exit status.
+An adaptive-mode deadline fallback is recorded as `degraded: true` with reason
+`timeout` and counts as evidence against that mode. Read each result to judge its
+gist and confirm that the model added no facts. Prompt changes need this replay.
+
+Live measurements on 26 October 2026 used `claude-haiku-5-5`, the eight synthetic
+rows and the bot's 8-second deadline. The first three runs had one cold request
+and seven prompt-cache reads; the final run reused the preceding probe's cache
+for all eight requests. No run used the fallback. Latency measures the extraction call,
+excluding process and SDK startup.
+
+| Prompt / thinking | Mean / median latency | Total cost, 8 calls | Cost per 1,000 at this sample mix | Quality |
+|---|---|---|---|---|
+| Initial / disabled | 2.350 / 1.809 s | $0.000986890 | $0.123361 | A1–A7 pass; A8 changes uncertainty and an approximate date |
+| Initial / adaptive | 2.660 / 1.842 s | $0.001067085 | $0.133386 | A1–A7 pass; A8 has the same defects |
+| First correction / disabled | 1.810 / 1.511 s | $0.001031065 | $0.128883 | A1–A7 pass; A8 fails both strengthened checks (exit 1) |
+| Final / disabled, warm cache | 1.518 / 1.150 s | $0.000940540 | $0.117568 | A1–A8 pass the strengthened checks and manual reading |
+
+Token counts below are totals across eight messages per run. Divide each total by
+eight for mean tokens per message. The input column excludes cache writes and reads.
+
+| Prompt / thinking | Input tokens | Output tokens | Cache-write tokens | Cache-read tokens |
+|---|---|---|---|---|
+| Initial / disabled | 1,355 | 1,039 | 1,702 | 11,914 |
+| Initial / adaptive | 1,355 | 1,199 | 1,703 | 11,921 |
+| First correction / disabled | 1,355 | 1,063 | 1,867 | 13,069 |
+| Final / disabled, warm cache | 1,355 | 1,212 | 0 | 19,904 |
+
+The initial comparison supports keeping thinking `disabled`: adaptive used more
+output tokens and had higher mean latency without fixing A8. These small samples
+do not establish general performance. Three further A8-only tuning probes
+preceded the final passing replay. One separate A8 diagnostic call also failed
+filler removal. The final copyediting prompt preserves uncertainty, approximate
+dates and context; manual review confirmed all eight final rows. A speaker's
+own correction can remain as a clarification when its meaning is preserved.
+Adaptive has not been tested with this final prompt. The 36 recorded calls,
+including failed attempts and probes, cost $0.007439830 in total.
+
+The prompt examples were refined after the A8 failures. They use different text
+but share A8's uncertainty, approximate-reminder and self-correction patterns.
+The final A8 pass therefore provides less evidence of generalisation than A1–A7.
+
+Costs use the [Haiku 5.5 rates](https://platform.claude.com/docs/en/models/haiku-5-5/overview)
+and [prompt-cache pricing](https://platform.claude.com/docs/en/about-claude/pricing)
+checked on that date: USD per million tokens, $0.10 input, $0.50 output,
+$0.125 for a five-minute cache write and $0.01 for a cache read. For each response,
+cost is `(input × 0.10 + output × 0.50 + cache_write × 0.125 + cache_read × 0.01)
+/ 1,000,000`. The per-1,000 column scales these eight-message samples; it is not a
+monthly bill estimate.
 
 ## Workers
 
@@ -184,8 +264,8 @@ curl -F file=@backend/tests/fixtures/voice-en.ogg -F response_format=json http:/
 
 Stop with Ctrl-C. The launcher forwards termination signals to the server and
 releases port 8178. Press Ctrl-C again to force a server that does not stop.
-The committed fixture is synthetic speech. No live Telegram,
-OpenAI or Anthropic integration is claimed by this foundation stage.
+The committed fixture is synthetic speech. No live Telegram or OpenAI integration
+is claimed. Claude extraction was checked with the synthetic replay above.
 
 ## Backend image
 

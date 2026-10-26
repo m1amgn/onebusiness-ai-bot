@@ -3,7 +3,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from taskbot.domain.limits import DESCRIPTION_MAX, MAX_TASKS_PER_MESSAGE, TITLE_MAX
+from taskbot.domain.limits import DESCRIPTION_MAX, TITLE_MAX
 from taskbot.domain.text import clean_inline, clean_text
 
 
@@ -28,13 +28,8 @@ class TaskDraft(BaseModel):
         return clean_text(value) if isinstance(value, str) else value
 
 
-class ExtractedTasks(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tasks: Annotated[list[TaskDraft], Field(min_length=1, max_length=MAX_TASKS_PER_MESSAGE)]
-
-
 class Extraction(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    tasks: Annotated[tuple[TaskDraft, ...], Field(min_length=1, max_length=MAX_TASKS_PER_MESSAGE)]
+    task: TaskDraft
     extractor: ExtractorName
     degraded: bool

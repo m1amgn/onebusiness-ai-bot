@@ -25,6 +25,7 @@
     "dev:whisper": "node scripts/dev-whisper.mjs",
     "db:migrate": "uv run --locked --directory backend alembic upgrade head",
     "dev:seed": "uv run --locked --directory backend python -m taskbot.entrypoints.seed",
+    "live:extraction": "uv run --locked --directory backend python tests/acceptance/replay_s9.py",
     "dev:worker": "uv run --locked --directory backend python -m taskbot.entrypoints.worker",
     "dev:bot": "node scripts/not-built.mjs dev:bot S4"
   }

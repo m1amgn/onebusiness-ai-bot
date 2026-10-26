@@ -1282,6 +1282,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "asyncpg-stubs" },
+    { name = "httpx2" },
     { name = "import-linter" },
     { name = "mypy" },
     { name = "pytest" },
@@ -1310,6 +1311,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "asyncpg-stubs", specifier = ">=0.32.0" },
+    { name = "httpx2", specifier = "==2.16.0" },
     { name = "import-linter", specifier = ">=2.15" },
     { name = "mypy", specifier = ">=2.4" },
     { name = "pytest", specifier = ">=9.1" },

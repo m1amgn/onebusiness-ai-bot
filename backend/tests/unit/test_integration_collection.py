@@ -1,32 +1,39 @@
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
+from tests.processes import run_process
 
-def test_collect_only_needs_no_running_infrastructure() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-m", "integration", "-q"],
-        cwd=Path(__file__).resolve().parents[2],
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+async def test_collect_only_needs_no_running_infrastructure() -> None:
+    result = await run_process(
+        sys.executable,
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-m",
+        "integration",
+        "-q",
+        cwd=BACKEND_ROOT,
         env=os.environ
         | {
             "DATABASE_URL": "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:59999/taskbot",
             "REDIS_URL": "redis://127.0.0.1:59998/0",
         },
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    baseline = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-m", "integration", "-q"],
-        cwd=Path(__file__).resolve().parents[2],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
+    baseline = await run_process(
+        sys.executable,
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-m",
+        "integration",
+        "-q",
+        cwd=BACKEND_ROOT,
     )
     assert baseline.returncode == 0, baseline.stdout + baseline.stderr
     expected = [
