@@ -9,9 +9,11 @@ from taskbot.application.stream_events import Connected, UserEventStream
 from taskbot.domain.errors import InvalidTicketError
 from taskbot.domain.events import AuthRevoked, TaskCreated, TaskDeleted, TaskUpdated
 from taskbot.domain.limits import TICKET_TTL_SECONDS
-from taskbot.entrypoints.api.auth import CurrentUser, Services
+from taskbot.entrypoints.api.auth import CurrentUser
+from taskbot.entrypoints.api.container import Services
+from taskbot.entrypoints.api.models import ApiError, json_error_response
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", responses={401: {"model": ApiError}})
 
 
 class RealtimeTicket(BaseModel):
@@ -45,7 +47,11 @@ async def open_stream(
         yield stream
 
 
-@router.get("/events", response_class=EventSourceResponse, responses={200: {"model": ServerEvent}})
+@router.get(
+    "/events",
+    response_class=EventSourceResponse,
+    responses={200: {"model": ServerEvent}, 401: json_error_response(), 503: json_error_response()},
+)
 async def events(
     stream: Annotated[UserEventStream, Depends(open_stream)],
 ) -> AsyncIterator[ServerSentEvent]:

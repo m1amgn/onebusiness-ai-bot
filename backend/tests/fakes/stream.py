@@ -1,8 +1,9 @@
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Iterable
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from types import TracebackType
+from typing import Self
 
 
 @dataclass
@@ -58,17 +59,34 @@ class FakeEventSubscriber:
         self.on_subscribe: Callable[[], None] | None = None
         self.enter_error: Exception | None = None
         self.close_error: Exception | None = None
+        self.exit_calls: list[
+            tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
+        ] = []
+        self.closing = asyncio.Event()
+        self.release_close = asyncio.Event()
+        self.block_close = False
 
-    @asynccontextmanager
-    async def subscribe(self, user_id: int) -> AsyncIterator[FakeEventSubscription]:
+    def subscribe(self, user_id: int) -> Self:
         self.user_ids.append(user_id)
-        try:
-            if self.enter_error is not None:
-                raise self.enter_error
-            if self.on_subscribe is not None:
-                self.on_subscribe()
-            yield self.subscription
-        finally:
-            self.closed = True
-            if self.close_error is not None:
-                raise self.close_error
+        return self
+
+    async def __aenter__(self) -> FakeEventSubscription:
+        if self.enter_error is not None:
+            raise self.enter_error
+        if self.on_subscribe is not None:
+            self.on_subscribe()
+        return self.subscription
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.exit_calls.append((exc_type, exc, tb))
+        self.closing.set()
+        if self.block_close:
+            await self.release_close.wait()
+        self.closed = True
+        if self.close_error is not None:
+            raise self.close_error

@@ -7,10 +7,17 @@ from typing import Self
 
 import pytest
 
-from taskbot.domain.errors import InvalidTicketError
+from taskbot.application import stream_events
+from taskbot.application.stream_events import (
+    Connected,
+    Event,
+    StreamItem,
+    StreamUserEvents,
+    UserEventStream,
+)
+from taskbot.domain.errors import EventStreamError, EventStreamGapError, InvalidTicketError
 from taskbot.domain.jobs import TicketClaims
 from taskbot.domain.users import User
-from tests.fakes.clock import FakeClock
 from tests.fakes.persistence import FakeStore, FakeUnitOfWork, FakeUserRepository
 from tests.fakes.stream import (
     FakeElapsed,
@@ -97,9 +104,12 @@ def setup_stream(
     )
 
 
-async def test_connected_precedes_exact_raw_events_and_revocation_ends_stream() -> None:
-    from taskbot.application.stream_events import Connected, Event, StreamUserEvents
+async def collect_items(stream: UserEventStream) -> list[StreamItem]:
+    async with asyncio.timeout(1):
+        return [item async for item in stream.items()]
 
+
+async def test_connected_precedes_exact_raw_events_and_revocation_ends_stream() -> None:
     # Task contents are the wire payload, not domain models to deserialize again.
     payloads = [
         '{ "type": "task.created", "task": {"id": 2}, "extra": [1, 2] }',
@@ -109,7 +119,7 @@ async def test_connected_precedes_exact_raw_events_and_revocation_ends_stream() 
     ]
     elapsed, store, subscriber = setup_stream(*(StreamStep(1, raw) for raw in payloads))
     async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-        items = [item async for item in stream.items()]
+        items = await collect_items(stream)
     assert items == [
         Connected(),
         Event("task.created", payloads[0]),
@@ -127,8 +137,6 @@ async def test_connected_precedes_exact_raw_events_and_revocation_ends_stream() 
 async def test_initial_check_after_subscription_refuses_stale_claims_and_closes(
     missing: bool,
 ) -> None:
-    from taskbot.application.stream_events import StreamUserEvents
-
     elapsed, store, subscriber = setup_stream()
 
     def revoke() -> None:
@@ -147,17 +155,10 @@ async def test_initial_check_after_subscription_refuses_stale_claims_and_closes(
 
 
 @pytest.mark.parametrize("missing", [False, True])
-@pytest.mark.parametrize("wall_rollback", [0, -60])
-async def test_recheck_uses_elapsed_deadline_despite_traffic_and_wall_clock_rollback(
-    missing: bool, wall_rollback: int
-) -> None:
-    from taskbot.application.stream_events import Connected, Event, StreamUserEvents
-
+async def test_recheck_uses_elapsed_deadline_despite_traffic(missing: bool) -> None:
     elapsed, store, subscriber = setup_stream()
-    wall_clock = FakeClock(NOW)
 
     def revoke() -> None:
-        wall_clock.advance(wall_rollback)
         if missing:
             store.state.users.clear()
         else:
@@ -168,7 +169,7 @@ async def test_recheck_uses_elapsed_deadline_despite_traffic_and_wall_clock_roll
         [StreamStep(5, raw, revoke), *(StreamStep(5, raw) for _ in range(3))]
     )
     async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-        items = [item async for item in stream.items()]
+        items = await collect_items(stream)
     assert items == [
         Connected(),
         Event("task.updated", raw),
@@ -182,12 +183,10 @@ async def test_recheck_uses_elapsed_deadline_despite_traffic_and_wall_clock_roll
 
 
 async def test_recheck_deadline_uses_previous_check_start_including_initial_check() -> None:
-    from taskbot.application.stream_events import StreamUserEvents
-
     elapsed, store, subscriber = setup_stream(StreamStep(40, '{"type":"auth.revoked"}'))
     store.query_seconds = 7
     async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-        _ = [item async for item in stream.items()]
+        _ = await collect_items(stream)
     assert store.read_started == [0, 20, 40, 60]
     assert subscriber.closed
 
@@ -196,9 +195,6 @@ async def test_recheck_deadline_uses_previous_check_start_including_initial_chec
 async def test_first_check_timeout_covers_whole_uow_and_maps_to_stream_error(
     phase: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from taskbot.application import stream_events
-    from taskbot.domain.errors import EventStreamError
-
     monkeypatch.setattr(stream_events, "RECHECK_TIMEOUT_SECONDS", 0.01)
     elapsed, store, subscriber = setup_stream()
     store.block_phase = phase
@@ -215,8 +211,6 @@ async def test_first_check_timeout_covers_whole_uow_and_maps_to_stream_error(
 async def test_periodic_timeout_ends_without_forwarding_next_event_and_closes(
     phase: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from taskbot.application import stream_events
-
     monkeypatch.setattr(stream_events, "RECHECK_TIMEOUT_SECONDS", 0.01)
     elapsed, store, subscriber = setup_stream(StreamStep(20, '{"type":"task.created"}'))
     with caplog.at_level(logging.WARNING):
@@ -225,7 +219,7 @@ async def test_periodic_timeout_ends_without_forwarding_next_event_and_closes(
                 CLAIMS
             ) as stream:
                 store.block_phase = phase
-                items = [item async for item in stream.items()]
+                items = await collect_items(stream)
     assert items == [stream_events.Connected()]
     assert store.cancelled
     assert subscriber.closed
@@ -237,13 +231,11 @@ async def test_periodic_timeout_ends_without_forwarding_next_event_and_closes(
 async def test_periodic_database_fault_ends_stream_and_logs_once(
     phase: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from taskbot.application.stream_events import Connected, StreamUserEvents
-
     elapsed, store, subscriber = setup_stream(StreamStep(20, '{"type":"task.created"}'))
     with caplog.at_level(logging.WARNING):
         async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
             store.error_phase = phase
-            items = [item async for item in stream.items()]
+            items = await collect_items(stream)
     assert items == [Connected()]
     assert subscriber.closed
     assert not store.lock.locked()
@@ -252,14 +244,11 @@ async def test_periodic_database_fault_ends_stream_and_logs_once(
 
 @pytest.mark.parametrize("gap", [False, True])
 async def test_subscription_fault_ends_stream(gap: bool, caplog: pytest.LogCaptureFixture) -> None:
-    from taskbot.application.stream_events import Connected, StreamUserEvents
-    from taskbot.domain.errors import EventStreamError, EventStreamGapError
-
     error = EventStreamGapError("reconnected") if gap else EventStreamError("unavailable")
     elapsed, store, subscriber = setup_stream(StreamStep(1, error))
     with caplog.at_level(logging.WARNING):
         async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-            items = [item async for item in stream.items()]
+            items = await collect_items(stream)
     assert items == [Connected()]
     assert subscriber.closed
     assert len(caplog.records) == 1
@@ -269,21 +258,16 @@ async def test_subscription_fault_ends_stream(gap: bool, caplog: pytest.LogCaptu
 async def test_invalid_payload_ends_without_forwarding(
     raw: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from taskbot.application.stream_events import Connected, StreamUserEvents
-
     elapsed, store, subscriber = setup_stream(StreamStep(1, raw))
     with caplog.at_level(logging.WARNING):
         async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-            items = [item async for item in stream.items()]
+            items = await collect_items(stream)
     assert items == [Connected()]
     assert subscriber.closed
     assert len(caplog.records) == 1
 
 
 async def test_subscription_entry_failure_propagates_before_stream_opens() -> None:
-    from taskbot.application.stream_events import StreamUserEvents
-    from taskbot.domain.errors import EventStreamError
-
     elapsed, store, subscriber = setup_stream()
     error = EventStreamError("subscription unavailable")
     subscriber.enter_error = error
@@ -298,9 +282,6 @@ async def test_subscription_entry_failure_propagates_before_stream_opens() -> No
 async def test_cleanup_failure_is_logged_and_does_not_escape(
     close_error: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from taskbot.application.stream_events import StreamUserEvents
-    from taskbot.domain.errors import EventStreamError
-
     elapsed, store, subscriber = setup_stream(StreamStep(1, '{"type":"auth.revoked"}'))
     subscriber.close_error = (
         EventStreamError("cleanup unavailable")
@@ -309,38 +290,96 @@ async def test_cleanup_failure_is_logged_and_does_not_escape(
     )
     with caplog.at_level(logging.WARNING):
         async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-            _ = [item async for item in stream.items()]
+            _ = await collect_items(stream)
     assert subscriber.closed
     assert len(caplog.records) == 1
 
 
-@pytest.mark.parametrize("phase", ["initial", "read", "recheck"])
-async def test_cancellation_propagates_and_closes_subscription(phase: str) -> None:
-    from taskbot.application.stream_events import StreamUserEvents
-    from taskbot.domain.errors import EventStreamError
+async def cancel_during_cleanup(
+    consumer: asyncio.Task[None], subscriber: FakeEventSubscriber
+) -> asyncio.CancelledError:
+    async with asyncio.timeout(1):
+        consumer.cancel()
+        await subscriber.closing.wait()
+        assert not consumer.done()
+        assert not subscriber.closed
+        subscriber.release_close.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await consumer
+    return caught.value
 
+
+@pytest.mark.parametrize("phase", ["initial", "read", "recheck", "body"])
+async def test_cancellation_waits_for_explicit_subscription_cleanup(phase: str) -> None:
     steps = [StreamStep(20, None)] if phase == "recheck" else []
     elapsed, store, subscriber = setup_stream(*steps)
     subscriber.close_error = EventStreamError("cleanup cannot replace cancellation")
+    subscriber.block_close = True
     if phase == "initial":
         store.block_phase = "query"
+    body_waiting = asyncio.Event()
+    closed_when_cancelled: list[bool] = []
 
     async def consume() -> None:
-        async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
-            if phase == "recheck":
-                store.block_phase = "query"
-            _ = [item async for item in stream.items()]
+        try:
+            async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS) as stream:
+                if phase == "body":
+                    body_waiting.set()
+                    await asyncio.Event().wait()
+                if phase == "recheck":
+                    store.block_phase = "query"
+                await collect_items(stream)
+        except asyncio.CancelledError:
+            closed_when_cancelled.append(subscriber.closed)
+            raise
 
     consumer = asyncio.create_task(consume())
     try:
         async with asyncio.timeout(1):
-            if phase == "read":
-                await subscriber.subscription.reading.wait()
-            else:
-                await store.blocked.wait()
+            waiting = {
+                "body": body_waiting,
+                "read": subscriber.subscription.reading,
+            }.get(phase, store.blocked)
+            await waiting.wait()
+            cancellation = await cancel_during_cleanup(consumer, subscriber)
+        assert closed_when_cancelled == [True]
+        assert subscriber.exit_calls[0][0] is asyncio.CancelledError
+        assert subscriber.exit_calls[0][1] is cancellation
+        assert subscriber.exit_calls[0][2] is not None
+        assert not store.lock.locked()
     finally:
-        consumer.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await consumer
+        subscriber.release_close.set()
+        if not consumer.done():
+            consumer.cancel()
+        async with asyncio.timeout(1):
+            with pytest.raises(asyncio.CancelledError):
+                await consumer
+
+
+@pytest.mark.parametrize("phase", ["invalid", "database", "timeout", "body"])
+async def test_cleanup_receives_active_error_without_replacing_it(
+    phase: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    elapsed, store, subscriber = setup_stream()
+    subscriber.close_error = EventStreamError("cleanup cannot replace the active error")
+    if phase == "invalid":
+        store.state.users.clear()
+    elif phase == "database":
+        store.error_phase = "query"
+    elif phase == "timeout":
+        store.block_phase = "query"
+        monkeypatch.setattr(stream_events, "RECHECK_TIMEOUT_SECONDS", 0.01)
+    expected_error = {
+        "invalid": InvalidTicketError,
+        "timeout": EventStreamError,
+    }.get(phase, RuntimeError)
+    async with asyncio.timeout(1):
+        with caplog.at_level(logging.WARNING), pytest.raises(expected_error) as caught:
+            async with StreamUserEvents(subscriber, store, elapsed).open(CLAIMS):
+                raise RuntimeError("consumer failed")
     assert subscriber.closed
-    assert not store.lock.locked()
+    assert len(subscriber.exit_calls) == 1
+    assert subscriber.exit_calls[0][0] is type(caught.value)
+    assert subscriber.exit_calls[0][1] is caught.value
+    assert subscriber.exit_calls[0][2] is not None
+    assert len(caplog.records) == 1

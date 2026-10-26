@@ -84,6 +84,8 @@ async def test_status_changes_keep_source_ownership_and_event_order() -> None:
     assert b.task.updated_at == clock.now() + timedelta(microseconds=2)
     same = await change.execute(1, b.task.id, TaskStatus.COMPLETED)
     assert a.view.source_text == same.view.source_text == "Call home"
+    assert a.events[0].type == "task.updated"
+    assert a.events[0].task.source_text == "Call home"
     assert not same.changed
     assert same.events == ()
     assert same.task.updated_at == b.task.updated_at
@@ -250,3 +252,9 @@ async def test_standalone_creation_rolls_back_failed_writes(failure: str) -> Non
         assert await uow.users.get(1) is None
         assert await uow.messages.get_by_ref(command.ref) is None
         assert await all_tasks(uow, 1) == ()
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+async def test_listing_refuses_nonpositive_limit(limit: int) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        await ListTasks(FakeStore()).execute(1, status=None, after=None, limit=limit)

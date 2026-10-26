@@ -2,13 +2,13 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 import pytest_asyncio
 from pydantic import PostgresDsn, RedisDsn
 
+from taskbot.application import stream_events
 from taskbot.application.dashboard_token import IssueDashboardToken, IssuedToken
 from taskbot.application.publishing import publish_events
 from taskbot.application.realtime_tickets import ConsumeRealtimeTicket
@@ -18,16 +18,16 @@ from taskbot.domain.events import AuthRevoked, TaskDeleted
 from taskbot.domain.jobs import TicketClaims
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.domain.users import TelegramIdentity
+from taskbot.entrypoints.api.app import create_app
+from taskbot.entrypoints.api.container import ApiServices, open_api_services
 from taskbot.infrastructure.clock import SystemClock
 from taskbot.infrastructure.redis.client import create_redis_client, user_channel
 from taskbot.infrastructure.redis.subscription import RedisEventSubscriber
+from taskbot.infrastructure.settings.api import ApiSettings
 from taskbot.infrastructure.tokens import SecretsTokenGenerator, Sha256TokenHasher
 from tests.api_server import api_server, assert_stream_headers, assert_ticket_rejected, read_frame
 from tests.fakes.messaging import FakeTicketStore
 from tests.redis_sessions import RedisSession
-
-if TYPE_CHECKING:
-    from taskbot.entrypoints.api.container import ApiServices
 
 IDENTITY = TelegramIdentity(7101, "Synthetic realtime user")
 
@@ -58,10 +58,6 @@ class RealtimeApi:
 async def realtime_api(
     postgres_uows: UnitOfWorkFactory, database_url: str, redis_session: RedisSession
 ) -> AsyncIterator[RealtimeApi]:
-    # Runtime imports preserve collect-only checks before the API slice exists.
-    from taskbot.entrypoints.api.app import create_app
-    from taskbot.entrypoints.api.container import open_api_services
-    from taskbot.infrastructure.settings.api import ApiSettings
 
     clock = SystemClock()
     issue = IssueDashboardToken(
@@ -131,7 +127,6 @@ async def test_stream_does_not_receive_another_users_event(realtime_api: Realtim
 async def test_unavailable_subscription_returns_503_before_stream_headers(
     realtime_api: RealtimeApi, postgres_uows: UnitOfWorkFactory
 ) -> None:
-    from taskbot.entrypoints.api.app import create_app
 
     api = realtime_api
     tickets = FakeTicketStore()
@@ -161,7 +156,6 @@ async def test_unavailable_subscription_returns_503_before_stream_headers(
 async def test_rotation_forwards_revocation_and_closes_stream(
     realtime_api: RealtimeApi, monkeypatch: pytest.MonkeyPatch, publish_rotation: bool
 ) -> None:
-    from taskbot.application import stream_events
 
     api = realtime_api
     if not publish_rotation:

@@ -1,8 +1,9 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -80,6 +81,7 @@ class UserEventStream:
                     pending = await self._subscription.next(
                         max(0, self._next_recheck - self._monotonic())
                     )
+                    # A read can reach the deadline; re-check before forwarding its event.
                     continue
                 envelope = EventEnvelope.model_validate_json(pending)
                 yield Event(envelope.type, pending)
@@ -92,6 +94,21 @@ class UserEventStream:
             logger.warning(
                 "User event stream ended after a stream or re-check failure", exc_info=True
             )
+
+
+class _SubscriptionCleanup(AsyncExitStack):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        try:
+            await super().__aexit__(exc_type, exc, tb)
+        except Exception:
+            logger.warning("User event subscription cleanup failed", exc_info=True)
+        # Cleanup cannot suppress the body's error or replace it with its own fault.
+        return False
 
 
 class StreamUserEvents:
@@ -107,9 +124,10 @@ class StreamUserEvents:
 
     @asynccontextmanager
     async def open(self, claims: TicketClaims) -> AsyncIterator[UserEventStream]:
-        context = self._subscriber.subscribe(claims.user_id)
-        subscription = await context.__aenter__()
-        try:
+        async with _SubscriptionCleanup() as resources:
+            subscription = await resources.enter_async_context(
+                self._subscriber.subscribe(claims.user_id)
+            )
             check_started = self._monotonic()
             try:
                 current = await _has_current_version(self._uows, claims)
@@ -120,8 +138,3 @@ class StreamUserEvents:
             yield UserEventStream(
                 subscription, self._uows, claims, self._monotonic, check_started + RECHECK_SECONDS
             )
-        finally:
-            try:
-                await context.__aexit__(None, None, None)
-            except Exception:
-                logger.warning("User event subscription cleanup failed", exc_info=True)

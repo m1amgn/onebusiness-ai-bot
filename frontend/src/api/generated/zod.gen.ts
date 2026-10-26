@@ -3,6 +3,13 @@
 import * as z from 'zod';
 
 /**
+ * ApiError
+ */
+export const zApiError = z.object({
+  detail: z.string(),
+});
+
+/**
  * AuthRevoked
  */
 export const zAuthRevoked = z.object({

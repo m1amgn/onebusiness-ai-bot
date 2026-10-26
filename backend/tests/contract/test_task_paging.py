@@ -74,3 +74,31 @@ async def test_full_page_retains_cursor_when_one_more_row_exists(
     last = await ListTasks(uows).execute(1, status=None, after=first.next, limit=200)
     assert len(last.items) == 1
     assert last.next is None
+
+
+async def test_status_filter_is_kept_across_all_pages(
+    uows: UnitOfWorkFactory, now: datetime
+) -> None:
+    async with uows() as uow:
+        for number in range(1, 6):
+            mid = await create_message(uow, now, number)
+            (task,) = await uow.tasks.add_many(1, mid, (TaskDraft(title=str(number)),), now)
+            if number % 2:
+                changed = task.change_status(TaskStatus.IN_PROGRESS, now)
+                assert changed is not None
+                await uow.tasks.save_status(changed)
+        await uow.commit()
+    listing = ListTasks(uows)
+    cursor = None
+    titles = []
+    for index in range(3):
+        page = await listing.execute(1, status=TaskStatus.IN_PROGRESS, after=cursor, limit=1)
+        assert len(page.items) == 1
+        titles.append(page.items[0].task.title)
+        assert page.items[0].task.status == TaskStatus.IN_PROGRESS
+        cursor = page.next
+        if index < 2:
+            assert cursor is not None
+        else:
+            assert cursor is None
+    assert titles == ["5", "3", "1"]

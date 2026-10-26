@@ -9,6 +9,8 @@ class ListTasks:
     async def execute(
         self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, limit: int
     ) -> TaskListing:
+        if limit < 1:
+            raise ValueError("Task page limit must be positive")
         async with self._uows() as uow:
             fetched = await uow.tasks.page_for_user(
                 user_id, status=status, after=after, fetch=limit + 1

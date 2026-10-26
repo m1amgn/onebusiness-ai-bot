@@ -61,6 +61,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(services: ApiServices | None = None) -> FastAPI:
     app = FastAPI(
         title="AI Task Bot",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
         generate_unique_id_function=lambda route: route.name,
         lifespan=lifespan if services is None else None,
     )

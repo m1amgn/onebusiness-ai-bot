@@ -5,6 +5,16 @@ export type ClientOptions = {
 };
 
 /**
+ * ApiError
+ */
+export type ApiError = {
+  /**
+   * Detail
+   */
+  detail: string;
+};
+
+/**
  * AuthRevoked
  */
 export type AuthRevoked = {
@@ -208,9 +218,17 @@ export type EventsData = {
 
 export type EventsErrors = {
   /**
+   * Unauthorized
+   */
+  401: ApiError;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
+  /**
+   * Service Unavailable
+   */
+  503: ApiError;
 };
 
 export type EventsError = EventsErrors[keyof EventsErrors];
@@ -230,6 +248,15 @@ export type IssueRealtimeTicketData = {
   query?: never;
   url: '/api/realtime/tickets';
 };
+
+export type IssueRealtimeTicketErrors = {
+  /**
+   * Unauthorized
+   */
+  401: ApiError;
+};
+
+export type IssueRealtimeTicketError = IssueRealtimeTicketErrors[keyof IssueRealtimeTicketErrors];
 
 export type IssueRealtimeTicketResponses = {
   /**
@@ -263,6 +290,10 @@ export type ListTasksData = {
 
 export type ListTasksErrors = {
   /**
+   * Unauthorized
+   */
+  401: ApiError;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -292,6 +323,14 @@ export type ChangeTaskStatusData = {
 };
 
 export type ChangeTaskStatusErrors = {
+  /**
+   * Unauthorized
+   */
+  401: ApiError;
+  /**
+   * Not Found
+   */
+  404: ApiError;
   /**
    * Validation Error
    */

@@ -319,3 +319,9 @@ these tickets expire after 30 seconds and cannot be reused after consumption.
 The API routes and streaming behavior are verified with local PostgreSQL and
 Redis; these checks need no Telegram or transcription credentials. The frontend
 contract is generated with `yarn api:schema`; `yarn api:check` detects drift.
+
+Runtime `/docs`, `/redoc` and `/openapi.json` routes are disabled. Use the
+committed OpenAPI file or `yarn api:schema`. Expected API errors have a JSON
+`detail` string, with generated types for `401`, `404` and `503`. Malformed JSON
+returns `422` before bearer validation; otherwise protected requests require
+a valid token.

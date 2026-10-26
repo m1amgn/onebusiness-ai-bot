@@ -55,7 +55,8 @@ execute results carry the events returned by commit. Publish only after commit w
 publish_events; publication failures are logged without undoing persisted work.
 CreateTasksFromMessage.within returns CreatedMessage or DuplicateMessage; standalone
 execute returns TasksCreated (which adds events) or DuplicateMessage. S5 composes the
-within result with voice-job completion in one unit of work. TaskView.from_task(task, source_text) in domain/events.py builds the shared wire
+within result with voice-job completion in one unit of work.
+TaskView.from_task(task, source_text) in domain/events.py builds the shared wire
 shape. Task events include the stored source message text; entities do not import
 wire models. TaskRepository.page_for_user joins that text and orders by descending
 message id, then ascending position. ListTasks fetches one extra row and returns
@@ -165,7 +166,6 @@ Task pages use opaque cursors and an optional status filter. Publish status even
 only after the use case commits. Keep the dev server's graceful shutdown timeout
 so open streams cannot block reload or Ctrl-C.
 
-
 Change Pydantic response models, then run root `yarn api:schema`; generated
 TypeScript and Zod files are never edited by hand. `yarn api:check` detects drift.
 Route names become OpenAPI operation ids; choose unique names.
@@ -262,3 +262,13 @@ closure. Celery serializes the fixup for spawned apps. Pool children and produce
 apps do not change their streams. Keep completed notify TERM/Ctrl-C logs free of
 bad-descriptor finalization errors; remove this compatibility fix when the pinned
 SDKs preserve the live wrapper themselves.
+
+## HTTP boundary details
+
+Runtime documentation routes are disabled; export the committed schema with
+yarn api:schema. FastAPI parses malformed JSON before bearer dependencies, so
+that combination returns 422 even without a token. Valid requests authenticate
+before application work. ApiError documents the common detail-string responses.
+Under an unthrottled event flood, FastAPI's keep-alive task can log
+BrokenResourceError during client abort; the subscription still closes. Ordinary
+traffic does not reproduce this dependency log noise.

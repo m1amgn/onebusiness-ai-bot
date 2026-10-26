@@ -2,6 +2,9 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from typing import Annotated, cast
+
+from fastapi import Depends, Request
 
 from taskbot.application.change_task_status import ChangeTaskStatus
 from taskbot.application.dashboard_token import AuthenticateToken
@@ -20,7 +23,7 @@ from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from taskbot.infrastructure.tokens import SecretsTokenGenerator, Sha256TokenHasher
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ApiServices:
     authenticate: AuthenticateToken
     list_tasks: ListTasks
@@ -55,3 +58,11 @@ async def open_api_services(settings: ApiSettings) -> AsyncIterator[ApiServices]
             ),
             publisher=RedisEventPublisher(client, namespace),
         )
+
+
+def get_services(request: Request) -> ApiServices:
+    # Starlette's State erases types at the application boundary.
+    return cast(ApiServices, request.app.state.services)
+
+
+type Services = Annotated[ApiServices, Depends(get_services)]

@@ -8,10 +8,13 @@ from pydantic import BaseModel, ConfigDict
 from taskbot.application.publishing import publish_events
 from taskbot.domain.events import TaskView
 from taskbot.domain.tasks import TaskCursor, TaskStatus
-from taskbot.entrypoints.api.auth import CurrentUser, Services
+from taskbot.entrypoints.api.auth import CurrentUser
+from taskbot.entrypoints.api.container import Services
+from taskbot.entrypoints.api.models import ApiError
 
-router = APIRouter(prefix="/api/tasks")
-type TaskId = Annotated[int, Path(ge=1, le=2_147_483_647)]
+INT32_MAX = 2_147_483_647
+router = APIRouter(prefix="/api/tasks", responses={401: {"model": ApiError}})
+type TaskId = Annotated[int, Path(ge=1, le=INT32_MAX)]
 
 
 class TaskPage(BaseModel):
@@ -24,14 +27,8 @@ class TaskStatusChange(BaseModel):
     status: TaskStatus
 
 
-def parse_cursor(cursor: str | None) -> TaskCursor | None:
-    if cursor is None:
-        return None
-    if re.fullmatch(r"[0-9]{1,10}\.[0-9]{1,2}", cursor):
-        message, position = (int(part) for part in cursor.split("."))
-        if message <= 2_147_483_647 and position <= 2_147_483_647:
-            return TaskCursor(message, position)
-    raise RequestValidationError(
+def invalid_cursor(cursor: str) -> RequestValidationError:
+    return RequestValidationError(
         [
             {
                 "type": "value_error",
@@ -41,6 +38,17 @@ def parse_cursor(cursor: str | None) -> TaskCursor | None:
             }
         ]
     )
+
+
+def parse_cursor(cursor: str | None) -> TaskCursor | None:
+    if cursor is None:
+        return None
+    if re.fullmatch(r"[0-9]{1,10}\.[0-9]{1,2}", cursor) is None:
+        raise invalid_cursor(cursor)
+    message, position = (int(part) for part in cursor.split("."))
+    if message > INT32_MAX:
+        raise invalid_cursor(cursor)
+    return TaskCursor(message, position)
 
 
 @router.get("")
@@ -61,7 +69,7 @@ async def list_tasks(
     )
 
 
-@router.patch("/{task_id}")
+@router.patch("/{task_id}", responses={404: {"model": ApiError}})
 async def change_task_status(
     task_id: TaskId, body: TaskStatusChange, user: CurrentUser, services: Services
 ) -> TaskView:
