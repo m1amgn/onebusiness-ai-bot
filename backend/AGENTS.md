@@ -197,6 +197,14 @@ A stage that adds dependencies or a top-level backend directory, such as
 
 ## Redis adapters
 
+BotSettings requires a validated Telegram token and reuses web and transcription
+settings mixins. PollingLock uses owner tokens, namespaced keys and bounded calls.
+Start LockKeeper immediately after acquisition, including slow startup; renew on
+fixed monotonic slots and fail closed before the lease expires. HeartbeatTask has
+its own task and writes only after successful polling. Its Lua guards prevent an
+old owner from writing or deleting a successor's heartbeat. Shutdown stops both
+tasks before shared-timeout heartbeat cleanup and token-checked lock release.
+
 Telegram adapters live in infrastructure/telegram. The notifier maps all aiogram
 and transport failures to the domain notifier errors without exception chaining.
 Only an edit's not-modified response is success; a gone edit target maps to

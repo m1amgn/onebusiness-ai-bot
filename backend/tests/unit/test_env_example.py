@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
+from pydantic import SecretStr
 
 from taskbot.infrastructure.settings.api import ApiSettings
+from taskbot.infrastructure.settings.bot import BotSettings
 from taskbot.infrastructure.settings.migration import MigrationSettings
 from taskbot.infrastructure.settings.seed import SeedSettings
 from taskbot.infrastructure.settings.worker import BrokerSettings, WorkerSettings
@@ -24,6 +26,7 @@ def test_example_environment_validates_and_contains_no_credentials(
         SeedSettings,
         BrokerSettings,
         WorkerSettings,
+        BotSettings,
     )
     for settings_type in settings_types:
         for name, field in settings_type.model_fields.items():
@@ -35,6 +38,7 @@ def test_example_environment_validates_and_contains_no_credentials(
                 "ANTHROPIC_MODEL",
                 "LOG_LEVEL",
                 "WEB_BASE_URL",
+                "TRANSCRIPTION_PROVIDER",
             }:
                 assert values[key] == str(field.default), f"{key} differs from the settings default"
     for key in values:
@@ -48,3 +52,4 @@ def test_example_environment_validates_and_contains_no_credentials(
     SeedSettings(_env_file=example)
     BrokerSettings(_env_file=example)
     WorkerSettings(_env_file=example)
+    BotSettings(_env_file=example, telegram_bot_token=SecretStr("123456:synthetic"))
