@@ -17,9 +17,23 @@ without mutation. Transcription and notification refusals have separate typed
 outcomes. A real task status change strictly increases updated_at by at least one
 microsecond; consumers must preserve that precision. Events exclude routing user_id
 from serialization. Extraction carries exactly one TaskDraft in its task field.
-The heuristic extractor keeps one task without language rules; the unbuilt Claude option returns
-that fallback marked degraded. Storage positions remain fixed by migration 0001;
+The heuristic extractor keeps one task without language rules. ClaudeExtractor returns
+one validated TaskDraft or the heuristic marked degraded on a provider/parse failure.
+Storage positions remain fixed by migration 0001;
 each new message creates its task at position 0.
+
+Open extractors through the async open_extractor context manager in the composition
+root; it owns and closes the Claude client on that root's event loop. Heuristic and
+keyless branches never import the SDK. Roots use code constants for deadlines:
+8 seconds in S4's bot, 30 in S5's worker and 30 in the seed. S5 must pass
+interrupts=(SoftTimeLimitExceeded,) so worker interruption propagates even when
+the SDK wraps it. Task cancellation always propagates. Requests disable SDK retries
+and pin the Anthropic base URL. Logs contain safe reason codes, usage and latency;
+keep anthropic and httpx2 loggers at WARNING after SDK import to protect chat text.
+
+The English system rules and four synthetic examples live in extraction/prompt.py.
+Keep the prompt at least 2600 characters for the cache prefix. Check prompt changes
+with the owner-controlled live replay; examples are not the acceptance messages.
 
 Test service doubles live in tests/fakes. The read-only owner-row replay is
 `uv run --locked --directory backend python tests/acceptance/replay_s2.py` from root.
@@ -74,8 +88,10 @@ checks use tests.processes.run_process, which kills the whole group on timeout.
 
 Root yarn dev:seed runs entrypoints/seed. Its composition root binds validated
 SeedSettings, SQL units of work, clock, extractor and token adapters. The CLI owns
-the Redis client and engine; register their cleanup immediately after construction.
-AsyncExitStack closes Redis before the engine and attempts both even if one fails.
+the extractor, Redis client and engine; register cleanup immediately after construction.
+AsyncExitStack closes the extractor, Redis and engine in that order and attempts all
+cleanup even if one fails. build_seed_ports receives the opened extractor explicitly;
+integration tests inject HeuristicExtractor so shell configuration cannot call Claude.
 The CLI constructs RedisEventPublisher and passes it as build_seed_ports's explicit
 publisher keyword; SeedPorts contains no owned client. The reusable seed function
 invokes standalone task creation and token issue, then publish_events once after

@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from taskbot.domain.errors import DomainError
 from taskbot.entrypoints.seed import build_seed_ports, seed
 from taskbot.entrypoints.settings import load_settings
+from taskbot.infrastructure.extraction.factory import open_extractor
 from taskbot.infrastructure.redis.client import create_redis_client, user_channel
 from taskbot.infrastructure.redis.events import RedisEventPublisher
 from taskbot.infrastructure.settings.seed import SeedSettings
@@ -14,6 +15,7 @@ from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
 from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 
 SAMPLE_TEXT = "Call home and ask about the weekend."
+SEED_EXTRACTION_DEADLINE_SECONDS = 30
 
 
 def positive_int64(value: str) -> int:
@@ -34,13 +36,19 @@ async def run(telegram_user_id: int, text: str) -> None:
         resources.push_async_callback(engine.dispose)
         client = create_redis_client(str(settings.redis_url))
         resources.push_async_callback(client.aclose)
+        extractor = await resources.enter_async_context(
+            open_extractor(settings, deadline_seconds=SEED_EXTRACTION_DEADLINE_SECONDS)
+        )
 
         def uows() -> SqlAlchemyUnitOfWork:
             return SqlAlchemyUnitOfWork(sessions)
 
         result = await seed(
             build_seed_ports(
-                settings, uows, publisher=RedisEventPublisher(client, settings.redis_namespace)
+                settings,
+                uows,
+                extractor,
+                publisher=RedisEventPublisher(client, settings.redis_namespace),
             ),
             telegram_user_id,
             text,

@@ -115,12 +115,13 @@ def test_drafts_and_extraction_validate_their_boundary() -> None:
             Extraction.model_validate({"extractor": "heuristic", "degraded": False, **invalid})
 
 
-async def test_factory_reports_unbuilt_model_as_degraded() -> None:
+async def test_factory_selects_the_configured_fallback() -> None:
     from taskbot.domain.text import MessageText
-    from taskbot.infrastructure.extraction.factory import build_extractor
+    from taskbot.infrastructure.extraction.factory import open_extractor
     from taskbot.infrastructure.settings.extractor import ExtractorSettingsMixin
 
     for requested, degraded in (("heuristic", False), ("claude", True)):
         settings = ExtractorSettingsMixin.model_validate({"task_extractor": requested})
-        result = await build_extractor(settings).extract(MessageText.parse("call home"))
+        async with open_extractor(settings, deadline_seconds=1) as extractor:
+            result = await extractor.extract(MessageText.parse("call home"))
         assert result.degraded is degraded
