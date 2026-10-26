@@ -170,15 +170,6 @@ test('direct scripts run when import.meta.main is unavailable', (t) => {
   }
 });
 
-test('future-stage command fails with its building stage', () => {
-  const result = spawnSync(process.execPath, ['scripts/not-built.mjs', 'dev:bot', 'S4'], {
-    cwd: REPOSITORY_ROOT,
-    encoding: 'utf8',
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /dev:bot.*built in stage S4/);
-});
-
 test('schema check runs the real exporter/generator and detects both kinds of stale output', (t) => {
   const root = fixture(t);
   write(root, 'package.json', readFileSync(join(REPOSITORY_ROOT, 'package.json')));

@@ -27,6 +27,6 @@
     "dev:seed": "uv run --locked --directory backend python -m taskbot.entrypoints.seed",
     "live:extraction": "uv run --locked --directory backend python tests/acceptance/replay_s9.py",
     "dev:worker": "uv run --locked --directory backend python -m taskbot.entrypoints.worker",
-    "dev:bot": "node scripts/not-built.mjs dev:bot S4"
+    "dev:bot": "uv run --locked --directory backend python -m taskbot.entrypoints.bot"
   }
 }

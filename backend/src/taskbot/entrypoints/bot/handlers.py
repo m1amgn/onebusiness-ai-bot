@@ -1,0 +1,166 @@
+import logging
+from contextlib import suppress
+
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.enums import ChatType
+from aiogram.exceptions import AiogramError
+from aiogram.filters import Command
+from aiogram.types import ErrorEvent, Message
+from aiohttp import ClientError
+
+from taskbot.application import replies
+from taskbot.application.accept_voice import AcceptVoiceCommand, VoiceRefused
+from taskbot.application.create_tasks import CreateTasksCommand, DuplicateMessage
+from taskbot.application.dashboard_token import dashboard_link
+from taskbot.application.publishing import publish_events
+from taskbot.domain.errors import NOTIFIER_ERRORS, EmptyMessageError
+from taskbot.domain.messages import MessageKind, MessageRef
+from taskbot.domain.users import TelegramIdentity
+from taskbot.entrypoints.bot import BotPorts
+from taskbot.entrypoints.bot.runtime import InFlightUpdates
+
+logger = logging.getLogger(__name__)
+
+
+async def reply(message: Message, ports: BotPorts, text: str) -> None:
+    try:
+        await ports.notifier.send_reply(
+            message.chat.id, text, reply_to_message_id=message.message_id
+        )
+    except NOTIFIER_ERRORS as error:
+        logger.warning("Telegram reply failed (%s)", type(error).__name__)
+
+
+def identity(message: Message) -> TelegramIdentity:
+    if message.from_user is None:
+        raise ValueError("A private message must have a sender")
+    return TelegramIdentity(message.from_user.id, message.from_user.full_name)
+
+
+async def ignore(message: Message) -> None:
+    return
+
+
+def ignored_sender(message: Message) -> bool:
+    return message.from_user is None or message.from_user.is_bot
+
+
+async def handle_nonprivate(message: Message, ports: BotPorts) -> None:
+    if message.text is not None and message.text.startswith("/"):
+        await reply(message, ports, replies.NOT_PRIVATE)
+
+
+async def handle_start(message: Message, ports: BotPorts) -> None:
+    await reply(message, ports, ports.start_message)
+
+
+async def handle_dashboard(message: Message, ports: BotPorts) -> None:
+    issued = await ports.issue_token.execute(identity(message))
+    await publish_events(ports.publisher, issued.events)
+    await reply(
+        message,
+        ports,
+        replies.DASHBOARD.format(link=dashboard_link(ports.web_base_url, issued.token)),
+    )
+
+
+async def handle_unknown(message: Message, ports: BotPorts) -> None:
+    await reply(message, ports, replies.UNKNOWN_COMMAND)
+
+
+async def handle_text(message: Message, ports: BotPorts, bot: Bot) -> None:
+    with suppress(AiogramError, TimeoutError, ClientError):
+        await bot.send_chat_action(message.chat.id, "typing", request_timeout=2)
+    try:
+        created = await ports.create_tasks.execute(
+            CreateTasksCommand(
+                identity(message),
+                MessageRef(message.chat.id, message.message_id),
+                MessageKind.TEXT,
+                message.text or "",
+            )
+        )
+    except EmptyMessageError:
+        await reply(message, ports, replies.EMPTY_TEXT)
+        return
+    if isinstance(created, DuplicateMessage):
+        return
+    text = replies.TASK_CREATED.format(title=created.tasks[0].title)
+    if created.message.degraded:
+        text += "\n" + replies.DEGRADED_LINE
+    await reply(message, ports, text)
+    await publish_events(ports.publisher, created.events)
+
+
+async def handle_voice(message: Message, ports: BotPorts) -> None:
+    voice = message.voice
+    if voice is None:
+        return
+    result = await ports.accept_voice.execute(
+        AcceptVoiceCommand(
+            identity(message),
+            MessageRef(message.chat.id, message.message_id),
+            voice.file_id,
+            voice.file_unique_id,
+            voice.duration,
+            voice.file_size,
+        )
+    )
+    if isinstance(result, VoiceRefused):
+        await reply(
+            message,
+            ports,
+            replies.VOICE_TOO_LONG if result.reason == "too_long" else replies.VOICE_TOO_LARGE,
+        )
+
+
+async def handle_unsupported(message: Message, ports: BotPorts) -> None:
+    await reply(message, ports, replies.UNSUPPORTED_MESSAGE)
+
+
+async def handle_error(event: ErrorEvent, ports: BotPorts) -> bool:
+    try:
+        logger.error(
+            "Telegram update %s failed (%s)", event.update.update_id, type(event.exception).__name__
+        )
+        message = event.update.message
+        if message is not None and message.chat.type == ChatType.PRIVATE:
+            await reply(message, ports, replies.SOMETHING_WENT_WRONG)
+    except Exception as error:
+        logger.error("Telegram error reply failed (%s)", type(error).__name__)
+    return True
+
+
+def create_dispatcher(ports: BotPorts, in_flight: InFlightUpdates) -> Dispatcher:
+    dispatcher = Dispatcher(disable_fsm=True, ports=ports)
+    dispatcher.update.outer_middleware(in_flight)
+    router = Router()
+    router.message.register(ignore, ignored_sender)
+    router.message.register(handle_nonprivate, F.chat.type != ChatType.PRIVATE)
+    router.message.register(handle_start, F.text, Command("start"))
+    router.message.register(handle_dashboard, F.text, Command("dashboard"))
+    router.message.register(handle_unknown, F.text.startswith("/"))
+    router.message.register(handle_text, F.text)
+    router.message.register(handle_voice, F.voice)
+    router.message.register(
+        handle_unsupported,
+        F.content_type.in_(
+            {
+                "photo",
+                "video",
+                "animation",
+                "sticker",
+                "video_note",
+                "audio",
+                "document",
+                "location",
+                "contact",
+                "poll",
+                "venue",
+                "dice",
+            }
+        ),
+    )
+    router.errors.register(handle_error)
+    dispatcher.include_router(router)
+    return dispatcher

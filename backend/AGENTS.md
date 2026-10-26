@@ -255,6 +255,35 @@ it waits for running sends and cancels executor work that has not started. Cance
 of an enqueue awaiter does not stop an already-running broker operation. Broker socket
 timeouts and bounded retries limit those operations; queued sends add executor batches.
 
+## Bot runtime
+
+Root yarn dev:bot runs entrypoints/bot. The process owns one engine, one named
+Redis client, one extractor with an eight-second deadline, one Celery producer
+and one Telegram session. Register every resource immediately with AsyncExitStack.
+No client is created per message. Check PostgreSQL before any Telegram request.
+Renew the polling lock from acquisition; a startup hook also renews it before
+the first poll, so a lost key cannot enter polling between startup steps.
+
+Register sender and private-chat guards before command/text/voice handlers.
+Use separate F.text and Command filter arguments; their bitwise conjunction is
+not a valid aiogram filter. Ignore edited updates and captions. All replies use
+UserNotifier; the typing action alone calls aiogram directly with a two-second
+timeout. The error hook logs class names and update ids only and never raises.
+
+InFlightUpdates tracks each handler until its task completes, including the
+error hook. Stop polling before draining, keep the Telegram session open during
+the drain, then cancel and await unfinished handlers after 15 seconds or the
+second signal. The process owns SIGINT/SIGTERM instead of aiogram. Supervise the
+keeper and heartbeat through startup and polling. PollingWatch counts successful
+getUpdates only. TokenRedactionFilter belongs on every root logging handler.
+
+The offline replay is tests/acceptance/replay_s4.py with TASKBOT_ENV_FILE=/dev/null.
+Its frozen B1-B19 expectations are s4_expected.json. tests/bot_runtime.py provides
+root spies over real PostgreSQL, Redis and the producer, with a fake Telegram
+transport and extractor. Root integration tests use per-session databases and
+namespaces, never development rows. A live check uses separate test credentials
+typed into this worktree's untracked dotenv file and is recorded in the README.
+
 ## Worker runtime
 
 Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role

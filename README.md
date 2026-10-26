@@ -5,8 +5,8 @@ A task-management application. Users create tasks by sending text or voice messa
 The domain core and PostgreSQL persistence are available, with migrations and a
 command to create development tasks. The API serves authenticated task pages,
 status changes and real-time events. The frontend is a placeholder with a generated
-API contract. The worker runtime is available. Bot handlers and task dashboard
-features are added in later stages.
+API contract. The Telegram bot accepts text and queues voice messages. The worker
+runtime is available; transcription handlers and the task dashboard arrive later.
 
 ## Local setup
 
@@ -52,11 +52,68 @@ No API key or Telegram token is needed for the foundation checks.
 | `yarn --silent dev:seed <telegram_user_id> [text …]` | Create tasks, rotate the dashboard token and publish events |
 | `yarn --silent live:extraction --thinking disabled\|adaptive` | Paid, opt-in replay of eight synthetic messages with Claude |
 | `yarn dev:worker transcribe` / `yarn dev:worker notify` | Start the prefork worker roles; notify also runs beat |
-| `yarn dev:bot` | Bot; currently fails naming stage S4 |
+| `yarn dev:bot` | Telegram bot; requires `TELEGRAM_BOT_TOKEN`; one instance per token |
 
 Never hand-edit `backend/openapi.json` or `frontend/src/api/generated`.
 Change the Pydantic models and run `yarn api:schema`. TypeScript types and runtime
 Zod schemas have the same source.
+
+## Telegram bot
+
+Apply database migrations, put a separate test bot token in the untracked `.env`,
+then run `yarn dev:bot`. The bot validates settings before starting. It checks
+PostgreSQL and acquires a Redis polling lock before contacting Telegram. A second
+instance exits with the remaining lock lifetime. The bot removes an existing
+webhook without discarding pending updates.
+
+Private text creates one task and replies with its title. Task titles retain the
+message's language; bot replies are English. `/start` shows the selected providers.
+`/dashboard` issues a personal link and invalidates older links. Keep the link
+private. Two concurrent requests can deliver the older link last; request another
+link if needed. A failed reply after rotation also needs a new `/dashboard`.
+
+A voice message receives an acknowledgement, then enters the transcription queue.
+The limits are 120 seconds and 10,000,000 bytes; exact limits pass. Missing size
+metadata is checked during download. Voice processing completes when the worker
+handlers are available. Failed enqueue attempts leave a recoverable database row.
+
+```text
+text  -> extract -> commit task -> reply -> publish event
+voice -> commit job -> reply -> store reply id -> enqueue -> stamp
+```
+
+Tasks come only from private chats. Commands in groups receive a private-chat
+reminder; other group content is ignored. Keep Telegram privacy mode enabled to
+avoid replies to unrelated group commands. Unknown commands receive usage text.
+Unsupported attachments receive a text-and-voice reminder. Captions and edits do
+not change tasks; forwarded messages belong to the person who forwarded them.
+
+The bot handles at most ten updates concurrently. It has no per-user rate limit,
+which assumes a small installation. Ctrl-C or SIGTERM stops polling and allows
+up to 15 seconds for active handlers. A second signal cancels the remaining work.
+SIGKILL, a drain timeout or an unexpected handler failure can lose a confirmed
+update. A crash after a text commit can leave a task without a reply or live
+event; refreshing the dashboard recovers its state. A duplicate delivery does not
+create another task. Resending as a new message creates a new task.
+
+`TRANSCRIPTION_PROVIDER` selects `whisper_server`, `openai` or `fake`. It never
+automatically falls back to another provider. Missing OpenAI credentials are shown
+by `/start`; voice messages are still acknowledged. A missing Anthropic key uses
+the degraded heuristic and adds a fallback notice to text replies.
+
+The bot renews its polling lock during startup and while draining. It publishes
+`heartbeat:bot` only after successful polling, under `REDIS_NAMESPACE` when set.
+Loss of ownership or sustained polling failure stops the process. Allow at least
+30 seconds for shutdown in the delivered stack; verify the producer drain under
+the deployment's broker conditions.
+
+Telegram: not verified live. Offline handler, adapter and lifecycle checks use a
+fake Telegram transport; integration checks use real isolated PostgreSQL and Redis.
+Run the synthetic acceptance replay without credentials:
+
+```sh
+TASKBOT_ENV_FILE=/dev/null uv run --locked --directory backend python tests/acceptance/replay_s4.py
+```
 
 ## Development tasks
 
