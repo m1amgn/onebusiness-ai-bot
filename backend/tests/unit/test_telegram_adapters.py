@@ -16,11 +16,12 @@ from taskbot.domain.errors import (
     VoiceFileTooLargeError,
     VoiceFileUnavailableError,
 )
+from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
+from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
+from tests.fakes.telegram_session import FakeTelegramSession
 
 
 async def test_notifier_sends_plain_reply_and_returns_message_id() -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     async with Bot("123456:synthetic", session=session) as bot:
@@ -47,8 +48,6 @@ async def test_notifier_sends_plain_reply_and_returns_message_id() -> None:
 async def test_notifier_maps_telegram_errors_without_response_body(
     status: int, description: str, expected: type[Exception]
 ) -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.responses.append(
@@ -73,8 +72,6 @@ async def test_notifier_maps_telegram_errors_without_response_body(
 
 
 async def test_not_modified_is_success() -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession(
         responses=deque(
@@ -95,8 +92,6 @@ async def test_not_modified_is_success() -> None:
     "error", [TimeoutError(), ClientConnectionError("synthetic network failure")]
 )
 async def test_notifier_maps_transport_failures(error: Exception) -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.request_errors["sendMessage"] = error
@@ -107,9 +102,6 @@ async def test_notifier_maps_transport_failures(error: Exception) -> None:
 
 @pytest.mark.parametrize("method", ["sendMessage", "editMessageText", "getFile", "download"])
 async def test_raw_decode_errors_stay_inside_the_telegram_ports(method: str) -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "private response")
@@ -136,9 +128,6 @@ async def test_raw_decode_errors_stay_inside_the_telegram_ports(method: str) -> 
 
 @pytest.mark.parametrize("method", ["sendMessage", "editMessageText", "getFile"])
 async def test_telegram_ports_propagate_cancellation(method: str) -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.request_gates[method] = asyncio.Event()
@@ -157,8 +146,6 @@ async def test_telegram_ports_propagate_cancellation(method: str) -> None:
 
 
 async def test_telegram_file_too_big_becomes_size_refusal() -> None:
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession(
         responses=deque(
@@ -186,8 +173,6 @@ async def test_telegram_file_too_big_becomes_size_refusal() -> None:
     [(502, "<html>private response</html>"), (200, '{"ok":true,"result":{"private":"body"}}')],
 )
 async def test_malformed_notifier_response_stays_inside_the_port(status: int, body: str) -> None:
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession(responses=deque([(status, body)]))
     async with Bot("123456:synthetic", session=session) as bot:
@@ -200,8 +185,6 @@ async def test_malformed_notifier_response_stays_inside_the_port(status: int, bo
 async def test_voice_download_caps_actual_bytes_with_optional_declared_size(
     declared: int | None,
 ) -> None:
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.responses.append(
@@ -227,8 +210,6 @@ async def test_voice_download_caps_actual_bytes_with_optional_declared_size(
 
 @pytest.mark.parametrize("declared", [None, 5])
 async def test_voice_download_refuses_declared_or_actual_oversize(declared: int | None) -> None:
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.responses.append(
@@ -257,8 +238,6 @@ async def test_voice_download_refuses_declared_or_actual_oversize(declared: int 
 async def test_download_hides_token_bearing_transport_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.stream_error = ClientConnectionError(
@@ -272,8 +251,6 @@ async def test_download_hides_token_bearing_transport_error(
 
 
 async def test_stalled_download_has_one_total_deadline() -> None:
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.stream_gate = asyncio.Event()
@@ -287,8 +264,6 @@ async def test_stalled_download_has_one_total_deadline() -> None:
 async def test_download_missing_file_path_or_server_error_is_unavailable(
     result: dict[str, str] | None,
 ) -> None:
-    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
-    from tests.fakes.telegram_session import FakeTelegramSession
 
     session = FakeTelegramSession()
     session.responses.append(

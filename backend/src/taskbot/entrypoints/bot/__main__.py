@@ -3,20 +3,25 @@ import logging
 import signal
 import sys
 from contextlib import AsyncExitStack, suppress
+from enum import Enum, auto
 from urllib.parse import urlsplit
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import AiogramError, TelegramUnauthorizedError
 from aiohttp import ClientError
 from redis.asyncio import Redis
-from redis.exceptions import RedisError
+from redis.exceptions import LockNotOwnedError, RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from taskbot.domain.voice_jobs import TranscriptionProvider
 from taskbot.entrypoints.bot import BotPorts, build_bot_ports
 from taskbot.entrypoints.bot.handlers import create_dispatcher
-from taskbot.entrypoints.bot.runtime import InFlightUpdates, PollingWatch, TokenRedactionFilter
+from taskbot.entrypoints.bot.runtime import (
+    POLLING_FAILURE_SECONDS,
+    InFlightUpdates,
+    PollingWatch,
+    TokenRedactionFilter,
+)
 from taskbot.entrypoints.settings import load_settings
 from taskbot.infrastructure.celery.app import create_celery_app
 from taskbot.infrastructure.celery.job_queue import CeleryJobQueue
@@ -25,9 +30,10 @@ from taskbot.infrastructure.redis.bot_lock import HeartbeatTask, LockKeeper, Pol
 from taskbot.infrastructure.redis.client import create_redis_client
 from taskbot.infrastructure.redis.events import RedisEventPublisher
 from taskbot.infrastructure.settings.bot import BotSettings
-from taskbot.infrastructure.settings.transcription import has_openai_key
+from taskbot.infrastructure.settings.transcription import openai_transcription_unavailable
 from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
 from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
 
 BOT_EXTRACTION_DEADLINE_SECONDS = 8
 BOT_CONCURRENCY = 10
@@ -35,18 +41,31 @@ DRAIN_SECONDS = 15
 logger = logging.getLogger(__name__)
 
 
+class BotStartupError(Exception):
+    """A safe operator-facing startup failure."""
+
+
+class Phase(Enum):
+    STARTUP = auto()
+    POLLING = auto()
+    DRAINING = auto()
+    CLOSING = auto()
+
+
 class StopController:
     def __init__(self) -> None:
-        self.task = asyncio.current_task()
         self.dispatcher: Dispatcher | None = None
-        self.phase = "startup"
+        self.phase = Phase.STARTUP
+        self.startup_stopped = asyncio.Event()
+        self.signals_received = 0
         self.stopped = False
         self.skip_drain = asyncio.Event()
         self.exit_code = 0
         self._stop_tasks: set[asyncio.Task[None]] = set()
 
     def signal(self) -> None:
-        if self.stopped:
+        self.signals_received += 1
+        if self.signals_received >= 2:
             self.skip_drain.set()
         self.request_stop()
 
@@ -58,10 +77,9 @@ class StopController:
 
     def request_stop(self) -> None:
         self.stopped = True
-        if self.phase == "startup":
-            if self.task is not None and self.task is not asyncio.current_task():
-                self.task.cancel()
-        elif self.phase == "polling":
+        if self.phase == Phase.STARTUP:
+            self.startup_stopped.set()
+        elif self.phase == Phase.POLLING:
             task = asyncio.create_task(self._stop_polling())
             self._stop_tasks.add(task)
             task.add_done_callback(self._stop_tasks.discard)
@@ -91,7 +109,8 @@ async def _check_database(engine: AsyncEngine) -> bool:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1 FROM inbound_messages LIMIT 0"))
         return True
-    except Exception:
+    except Exception as error:
+        logger.warning("Database startup check failed (%s)", type(error).__name__)
         return False
 
 
@@ -100,7 +119,7 @@ def _supervise(
     control: StopController,
     message: str,
 ) -> None:
-    if task.cancelled() or control.phase == "closing":
+    if task.cancelled() or control.phase == Phase.CLOSING:
         return
     error = task.exception()
     if error is not None:
@@ -108,7 +127,7 @@ def _supervise(
     control.fail(message)
 
 
-async def _poll(
+async def _open_resources_and_run(
     settings: BotSettings,
     resources: AsyncExitStack,
     control: StopController,
@@ -119,8 +138,7 @@ async def _poll(
     engine, sessions = create_engine_and_sessions(str(settings.database_url))
     resources.push_async_callback(engine.dispose)
     if not await _check_database(engine):
-        control.fail("Database is unavailable or not migrated")
-        return
+        raise BotStartupError("Database is unavailable or not migrated")
     app = create_celery_app(broker_url=settings.broker_url, namespace=settings.redis_namespace)
     resources.callback(app.close)
     queue = CeleryJobQueue(app)
@@ -134,16 +152,12 @@ async def _poll(
         await bot.me()
         await bot.delete_webhook(drop_pending_updates=False)
     except TelegramUnauthorizedError:
-        control.fail("Telegram rejected TELEGRAM_BOT_TOKEN.")
-        return
+        raise BotStartupError("Telegram rejected TELEGRAM_BOT_TOKEN.") from None
     except AiogramError, TimeoutError, ClientError:
-        control.fail("Cannot reach api.telegram.org.")
-        return
+        raise BotStartupError("Cannot reach api.telegram.org.") from None
 
     def uows() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(sessions)
-
-    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
 
     ports = build_bot_ports(
         settings,
@@ -171,16 +185,20 @@ async def _run_dispatcher(
     bot.session.middleware(watch)
 
     async def before_polling() -> None:
-        if keeper.lost or control.stopped:
-            control.fail("The polling lock was lost.")
-            raise asyncio.CancelledError
+        if keeper.lost:
+            raise BotStartupError("The polling lock was lost.")
         try:
             await lock.renew()
-        except RedisError, TimeoutError:
-            control.fail("The polling lock was lost.")
-            raise asyncio.CancelledError from None
+        except LockNotOwnedError:
+            raise BotStartupError("The polling lock was lost.") from None
+        except (RedisError, TimeoutError) as error:
+            logger.warning("Polling startup renewal failed (%s)", type(error).__name__)
+        if keeper.lost:
+            raise BotStartupError("The polling lock was lost.")
         watch.start()
-        control.phase = "polling"
+        control.phase = Phase.POLLING
+        if control.stopped:
+            control.request_stop()
 
     dispatcher.startup.register(before_polling)
     heartbeat = asyncio.create_task(
@@ -193,7 +211,9 @@ async def _run_dispatcher(
         if keeper.lost:
             message = "The polling lock was lost."
         elif watch.failed():
-            message = f"Telegram polling has failed for 60 s ({watch.last_error})."
+            message = (
+                f"Telegram polling has failed for {POLLING_FAILURE_SECONDS} s ({watch.last_error})."
+            )
         _supervise(task, control, message)
 
     heartbeat.add_done_callback(heartbeat_done)
@@ -205,7 +225,7 @@ async def _run_dispatcher(
             tasks_concurrency_limit=BOT_CONCURRENCY,
         )
     finally:
-        control.phase = "draining"
+        control.phase = Phase.DRAINING
         await in_flight.drain(DRAIN_SECONDS, skip=control.skip_drain)
 
 
@@ -213,27 +233,44 @@ async def _serve(settings: BotSettings, resources: AsyncExitStack, control: Stop
     client = create_redis_client(str(settings.redis_url), client_name="bot")
     resources.push_async_callback(client.aclose)
     lock = PollingLock(client, settings.redis_namespace)
+    resources.push_async_callback(lock.release)
     try:
         acquired = await lock.acquire()
         if not acquired:
             remaining = await lock.remaining_seconds()
-            control.fail(
+            raise BotStartupError(
                 f"Another bot instance holds the polling lock {lock.key}; "
                 f"it expires in {remaining} s."
             )
-            return
     except RedisError, TimeoutError:
         address = urlsplit(str(settings.redis_url))
-        control.fail(f"Redis is unavailable at {address.hostname}:{address.port or 6379}")
-        return
-    resources.push_async_callback(lock.release)
+        raise BotStartupError(
+            f"Redis is unavailable at {address.hostname}:{address.port or 6379}"
+        ) from None
     keeper = LockKeeper(lock)
     keeper_task = asyncio.create_task(keeper.run())
     resources.push_async_callback(_stop_task, keeper_task)
     keeper_task.add_done_callback(
         lambda task: _supervise(task, control, "The polling lock was lost.")
     )
-    await _poll(settings, resources, control, lock, keeper, client)
+    await _open_resources_and_run(settings, resources, control, lock, keeper, client)
+
+
+async def _serve_until_stopped(
+    settings: BotSettings, resources: AsyncExitStack, control: StopController
+) -> None:
+    # Cancel only the owned startup task; an external cancellation of run still propagates.
+    serving = asyncio.create_task(_serve(settings, resources, control))
+    stopped = asyncio.create_task(control.startup_stopped.wait())
+    try:
+        await asyncio.wait({serving, stopped}, return_when=asyncio.FIRST_COMPLETED)
+        if serving.done():
+            await serving
+    finally:
+        if not serving.done():
+            serving.cancel()
+        stopped.cancel()
+        await asyncio.gather(serving, stopped, return_exceptions=True)
 
 
 async def run(settings: BotSettings | None = None) -> int:
@@ -244,9 +281,7 @@ async def run(settings: BotSettings | None = None) -> int:
     handlers = list(logging.getLogger().handlers)
     for handler in handlers:
         handler.addFilter(redaction)
-    if settings.transcription_provider == TranscriptionProvider.OPENAI and not has_openai_key(
-        settings
-    ):
+    if openai_transcription_unavailable(settings):
         logger.warning("OpenAI transcription is unavailable: missing API key")
     control = StopController()
     previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
@@ -254,16 +289,17 @@ async def run(settings: BotSettings | None = None) -> int:
     try:
         async with AsyncExitStack() as resources:
             try:
-                await _serve(settings, resources, control)
+                await _serve_until_stopped(settings, resources, control)
             finally:
-                control.phase = "closing"
-    except asyncio.CancelledError:
-        if not control.stopped:
-            raise
+                control.phase = Phase.CLOSING
+    except BotStartupError as error:
+        print(str(error), file=sys.stderr)
+        control.exit_code = 1
     except Exception as error:
-        control.fail(f"Bot stopped ({type(error).__name__}).")
+        print(f"Bot stopped ({type(error).__name__}).", file=sys.stderr)
+        control.exit_code = 1
     finally:
-        control.phase = "closing"
+        control.phase = Phase.CLOSING
         await control.close()
         loop = asyncio.get_running_loop()
         for number, old_handler in previous.items():

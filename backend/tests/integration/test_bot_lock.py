@@ -2,19 +2,20 @@ import asyncio
 from contextlib import suppress
 
 import pytest
+from redis.exceptions import ConnectionError
 
+from taskbot.infrastructure.redis.bot_lock import HeartbeatTask, LockKeeper, PollingLock
 from taskbot.infrastructure.redis.client import create_redis_client
 from tests.redis_sessions import RedisSession
 from tests.tcp_proxy import tcp_proxy
 
 
 async def test_silent_redis_bounds_renewal_and_shared_cleanup(redis_session: RedisSession) -> None:
-    from taskbot.infrastructure.redis.bot_lock import LockKeeper, PollingLock
-
     async with (
         tcp_proxy(redis_session.redis_url) as proxy,
         create_redis_client(proxy.url) as client,
     ):
+        await client.ping()
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.5, call_timeout=0.04)
         assert await lock.acquire()
         keeper = LockKeeper(lock, renew_seconds=0.05, stop_after_seconds=0.15)
@@ -29,8 +30,6 @@ async def test_silent_redis_bounds_renewal_and_shared_cleanup(redis_session: Red
 async def test_lock_exclusion_renewal_and_foreign_owner_cleanup(
     redis_session: RedisSession,
 ) -> None:
-    from taskbot.infrastructure.redis.bot_lock import PollingLock
-
     namespace = redis_session.child()
     async with create_redis_client(redis_session.redis_url) as client:
         first = PollingLock(client, namespace, ttl_seconds=0.5)
@@ -44,6 +43,9 @@ async def test_lock_exclusion_renewal_and_foreign_owner_cleanup(
         await client.delete(first.key)
         assert await second.acquire()
         assert await second.write_heartbeat()
+        successor_health = await client.get(second.heartbeat_key)
+        assert not await first.write_heartbeat()
+        assert await client.get(second.heartbeat_key) == successor_health
         await first.release()
         assert await client.exists(second.key)
         assert await client.exists(second.heartbeat_key)
@@ -55,8 +57,6 @@ async def test_lock_exclusion_renewal_and_foreign_owner_cleanup(
 async def test_keeper_renews_during_delayed_startup_then_reports_lost_key(
     redis_session: RedisSession,
 ) -> None:
-    from taskbot.infrastructure.redis.bot_lock import LockKeeper, PollingLock
-
     async with create_redis_client(redis_session.redis_url) as client:
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.3, call_timeout=0.05)
         assert await lock.acquire()
@@ -80,8 +80,6 @@ async def test_keeper_renews_during_delayed_startup_then_reports_lost_key(
 async def test_heartbeat_starts_only_after_poll_health_and_cannot_block_renewal(
     redis_session: RedisSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from taskbot.infrastructure.redis.bot_lock import HeartbeatTask, LockKeeper, PollingLock
-
     async with create_redis_client(redis_session.redis_url) as client:
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.25, call_timeout=0.1)
         assert await lock.acquire()
@@ -116,11 +114,8 @@ async def test_heartbeat_starts_only_after_poll_health_and_cannot_block_renewal(
 async def test_keeper_stops_before_ttl_after_failed_renewals(
     redis_session: RedisSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from redis.exceptions import ConnectionError
-
-    from taskbot.infrastructure.redis.bot_lock import LockKeeper, PollingLock
-
     async with create_redis_client(redis_session.redis_url) as client:
+        await client.ping()
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.5, call_timeout=0.04)
         assert await lock.acquire()
         keeper = LockKeeper(lock, renew_seconds=0.05, stop_after_seconds=0.15)
@@ -137,3 +132,24 @@ async def test_keeper_stops_before_ttl_after_failed_renewals(
             assert await client.pttl(lock.key) > 150
         finally:
             await lock.release()
+
+
+@pytest.mark.parametrize("interruption", [TimeoutError, asyncio.CancelledError])
+async def test_ambiguous_acquire_is_released_by_owner_token(
+    redis_session: RedisSession, monkeypatch: pytest.MonkeyPatch, interruption: type[BaseException]
+) -> None:
+    async with create_redis_client(redis_session.redis_url) as client:
+        lock = PollingLock(client, redis_session.child())
+        original = lock._lock.acquire
+
+        async def interrupted(*, token: str) -> bool:
+            await original(token=token)
+            raise interruption()
+
+        monkeypatch.setattr(lock._lock, "acquire", interrupted)
+        with pytest.raises(interruption):
+            await lock.acquire()
+        assert lock.acquired_at is None
+        assert await client.exists(lock.key)
+        await lock.release()
+        assert not await client.exists(lock.key)

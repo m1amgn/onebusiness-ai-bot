@@ -9,11 +9,10 @@ from taskbot.domain.ports.messaging import EventPublisher, JobQueue
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.domain.ports.services import TaskExtractor
 from taskbot.domain.ports.telegram import UserNotifier
-from taskbot.domain.voice_jobs import TranscriptionProvider
 from taskbot.infrastructure.clock import SystemClock
 from taskbot.infrastructure.extraction.factory import has_anthropic_key
 from taskbot.infrastructure.settings.bot import BotSettings
-from taskbot.infrastructure.settings.transcription import has_openai_key
+from taskbot.infrastructure.settings.transcription import openai_transcription_unavailable
 from taskbot.infrastructure.tokens import SecretsTokenGenerator, Sha256TokenHasher
 
 
@@ -30,9 +29,7 @@ class BotPorts:
 
 def start_text(settings: BotSettings) -> str:
     provider = str(settings.transcription_provider)
-    if settings.transcription_provider == TranscriptionProvider.OPENAI and not has_openai_key(
-        settings
-    ):
+    if openai_transcription_unavailable(settings):
         provider = "openai (no API key, voice messages are unavailable)"
     extractor: str = settings.task_extractor
     if extractor == "claude" and not has_anthropic_key(settings):

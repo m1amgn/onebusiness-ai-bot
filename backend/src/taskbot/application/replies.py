@@ -21,3 +21,8 @@ UNKNOWN_COMMAND = (
 )
 UNSUPPORTED_MESSAGE = "I understand text and voice messages only."
 SOMETHING_WENT_WRONG = "Something went wrong. Please try again."
+
+
+def task_created_text(title: str, degraded: bool) -> str:
+    text = TASK_CREATED.format(title=title)
+    return text + "\n" + DEGRADED_LINE if degraded else text

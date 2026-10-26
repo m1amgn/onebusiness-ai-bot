@@ -15,6 +15,7 @@ LOCK_TTL_SECONDS = 30
 LOCK_RENEW_SECONDS = 5
 LOCK_STOP_AFTER_SECONDS = 15
 REDIS_CALL_TIMEOUT_SECONDS = 4
+HEARTBEAT_INTERVAL_SECONDS = 10
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,9 @@ if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
 redis.call('psetex', KEYS[2], ARGV[2], ARGV[3])
 return 1
 """
-DELETE_HEARTBEAT = """
+RELEASE_POLLING_LOCK = """
 if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
-return redis.call('del', KEYS[2])
+return redis.call('del', KEYS[1], KEYS[2])
 """
 
 
@@ -48,7 +49,7 @@ class PollingLock:
         self._token = secrets.token_hex(16)
         self._lock = client.lock(self.key, timeout=ttl_seconds, blocking=False, thread_local=False)
         self._write_heartbeat = client.register_script(WRITE_HEARTBEAT)
-        self._delete_heartbeat = client.register_script(DELETE_HEARTBEAT)
+        self._release = client.register_script(RELEASE_POLLING_LOCK)
 
     async def acquire(self) -> bool:
         started = asyncio.get_running_loop().time()
@@ -75,15 +76,10 @@ class PollingLock:
         return bool(result)
 
     async def release(self) -> None:
-        if self.acquired_at is None:
-            return
         try:
             async with asyncio.timeout(self.call_timeout):
-                # Delete health only for this owner; release has its own token comparison.
-                await self._delete_heartbeat(
-                    keys=[self.key, self.heartbeat_key], args=[self._token]
-                )
-                await self._lock.release()
+                # Also release an applied SET whose reply was lost or cancelled.
+                await self._release(keys=[self.key, self.heartbeat_key], args=[self._token])
         except (RedisError, TimeoutError) as error:
             logger.warning("Polling lock cleanup failed (%s)", type(error).__name__)
 
@@ -114,8 +110,8 @@ class LockKeeper:
                 await self._lock.renew()
             except LockNotOwnedError:
                 self.lost = True
-            except RedisError, TimeoutError:
-                pass
+            except (RedisError, TimeoutError) as error:
+                logger.warning("Polling renewal failed (%s)", type(error).__name__)
             else:
                 self.last_renewed = started
             if loop.time() - self.last_renewed >= self._stop_after_seconds:
@@ -136,7 +132,7 @@ class HeartbeatTask:
         *,
         healthy: Callable[[], bool],
         failed: Callable[[], bool],
-        interval_seconds: float = 10,
+        interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
     ) -> None:
         self._lock = lock
         self._keeper = keeper

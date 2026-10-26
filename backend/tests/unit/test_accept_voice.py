@@ -1,39 +1,25 @@
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
-from taskbot.application.register_user import RegisterOrGetUser
+from taskbot.application.accept_voice import (
+    VoiceAccepted,
+    VoiceAlreadyAccepted,
+    VoiceRefused,
+)
+from taskbot.application.dashboard_token import dashboard_link
 from taskbot.domain.errors import NotificationError
-from taskbot.domain.messages import MessageRef
-from taskbot.domain.users import TelegramIdentity
 from taskbot.domain.voice_jobs import VoiceJobStatus
-from tests.fakes.clock import FakeClock
-from tests.fakes.messaging import FakeJobQueue
-from tests.fakes.persistence import FakeStore
-
-
-def setup_voice() -> tuple[FakeStore, FakeClock, FakeJobQueue]:
-    store = FakeStore()
-    return store, FakeClock(datetime(2026, 1, 1, tzinfo=UTC)), FakeJobQueue(store.calls)
+from tests.bot import voice_command, voice_fixture, voice_use_case
+from tests.fakes.telegram import FakeUserNotifier
 
 
 async def test_voice_commits_acknowledges_then_enqueues_without_an_open_transaction() -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceAccepted,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
+    store, clock, queue = voice_fixture()
     notifier = FakeUserNotifier(calls=store.calls)
-    command = AcceptVoiceCommand(
-        TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 35, 100
-    )
-    result = await AcceptVoiceMessage(
-        store, RegisterOrGetUser(store, clock), notifier, queue, clock
-    ).execute(command)
+    command = voice_command(35, 100)
+    result = await voice_use_case(store, clock, queue, notifier).execute(command)
     assert isinstance(result, VoiceAccepted)
     assert result.acknowledged
     assert result.enqueued
@@ -69,20 +55,9 @@ async def test_voice_commits_acknowledges_then_enqueues_without_an_open_transact
 async def test_voice_limits_refuse_before_any_io(
     duration: int, size: int | None, reason: str | None
 ) -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceRefused,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
-    command = AcceptVoiceCommand(
-        TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", duration, size
-    )
-    result = await AcceptVoiceMessage(
-        store, RegisterOrGetUser(store, clock), FakeUserNotifier(), queue, clock
-    ).execute(command)
+    store, clock, queue = voice_fixture()
+    command = voice_command(duration, size)
+    result = await voice_use_case(store, clock, queue, FakeUserNotifier()).execute(command)
     if reason:
         assert isinstance(result, VoiceRefused)
         assert result.reason == reason
@@ -94,21 +69,10 @@ async def test_voice_limits_refuse_before_any_io(
 
 
 async def test_failed_enqueue_keeps_ack_and_is_eligible_for_the_recovery_sweep() -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceAccepted,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
+    store, clock, queue = voice_fixture()
     queue.fail = True
-    result = await AcceptVoiceMessage(
-        store, RegisterOrGetUser(store, clock), FakeUserNotifier(), queue, clock
-    ).execute(
-        AcceptVoiceCommand(
-            TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 1, None
-        )
+    result = await voice_use_case(store, clock, queue, FakeUserNotifier()).execute(
+        voice_command(1, None)
     )
     assert isinstance(result, VoiceAccepted)
     assert not result.enqueued
@@ -121,19 +85,10 @@ async def test_failed_enqueue_keeps_ack_and_is_eligible_for_the_recovery_sweep()
 
 
 async def test_failed_ack_still_enqueues_and_duplicate_resumes_only_until_ack_is_stored() -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceAlreadyAccepted,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
+    store, clock, queue = voice_fixture()
     notifier = FakeUserNotifier(failures={1: NotificationError("synthetic")})
-    use_case = AcceptVoiceMessage(store, RegisterOrGetUser(store, clock), notifier, queue, clock)
-    command = AcceptVoiceCommand(
-        TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 1, None
-    )
+    use_case = voice_use_case(store, clock, queue, notifier)
+    command = voice_command(1, None)
     await use_case.execute(command)
     assert store.state.voice_jobs[1].ack_message_id is None
     assert len(queue.jobs) == 1
@@ -150,14 +105,7 @@ async def test_unexpected_adapter_error_after_acceptance_is_contained(
     operation: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceAccepted,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
+    store, clock, queue = voice_fixture()
     notifier = FakeUserNotifier(
         failures={1: RuntimeError("private response")} if operation == "ack" else {}
     )
@@ -167,13 +115,7 @@ async def test_unexpected_adapter_error_after_acceptance_is_contained(
             raise RuntimeError("private broker response")
 
         monkeypatch.setattr(queue, "enqueue", fail)
-    result = await AcceptVoiceMessage(
-        store, RegisterOrGetUser(store, clock), notifier, queue, clock
-    ).execute(
-        AcceptVoiceCommand(
-            TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 1, None
-        )
-    )
+    result = await voice_use_case(store, clock, queue, notifier).execute(voice_command(1, None))
     assert isinstance(result, VoiceAccepted)
     assert result.acknowledged == (operation != "ack")
     assert result.enqueued == (operation != "enqueue")
@@ -186,19 +128,10 @@ async def test_unexpected_adapter_error_after_acceptance_is_contained(
 async def test_duplicate_without_ack_does_not_resume_processing_or_terminal_job(
     status: VoiceJobStatus,
 ) -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceAlreadyAccepted,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
+    store, clock, queue = voice_fixture()
     notifier = FakeUserNotifier(failures={1: NotificationError("synthetic")})
-    use_case = AcceptVoiceMessage(store, RegisterOrGetUser(store, clock), notifier, queue, clock)
-    command = AcceptVoiceCommand(
-        TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 1, None
-    )
+    use_case = voice_use_case(store, clock, queue, notifier)
+    command = voice_command(1, None)
     await use_case.execute(command)
     store.state.voice_jobs[1] = replace(store.state.voice_jobs[1], status=status)
     assert isinstance(await use_case.execute(command), VoiceAlreadyAccepted)
@@ -210,21 +143,10 @@ async def test_duplicate_without_ack_does_not_resume_processing_or_terminal_job(
 async def test_metadata_failure_after_acceptance_still_enqueues_and_returns_normally(
     failure: str,
 ) -> None:
-    from taskbot.application.accept_voice import (
-        AcceptVoiceCommand,
-        AcceptVoiceMessage,
-        VoiceAccepted,
-    )
-    from tests.fakes.telegram import FakeUserNotifier
-
-    store, clock, queue = setup_voice()
+    store, clock, queue = voice_fixture()
     store.fail_on = failure
-    result = await AcceptVoiceMessage(
-        store, RegisterOrGetUser(store, clock), FakeUserNotifier(), queue, clock
-    ).execute(
-        AcceptVoiceCommand(
-            TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 1, None
-        )
+    result = await voice_use_case(store, clock, queue, FakeUserNotifier()).execute(
+        voice_command(1, None)
     )
     assert isinstance(result, VoiceAccepted)
     assert result.enqueued
@@ -232,8 +154,6 @@ async def test_metadata_failure_after_acceptance_still_enqueues_and_returns_norm
 
 
 def test_dashboard_link_uses_the_fragment_route() -> None:
-    from taskbot.application.dashboard_token import dashboard_link
-
     assert (
         dashboard_link("https://example.invalid", "synthetic")
         == "https://example.invalid/#token=synthetic"

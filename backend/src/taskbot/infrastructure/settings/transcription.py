@@ -12,3 +12,9 @@ def has_openai_key(settings: TranscriptionSettingsMixin) -> bool:
     return settings.openai_api_key is not None and bool(
         settings.openai_api_key.get_secret_value().strip()
     )
+
+
+def openai_transcription_unavailable(settings: TranscriptionSettingsMixin) -> bool:
+    return settings.transcription_provider == TranscriptionProvider.OPENAI and not has_openai_key(
+        settings
+    )

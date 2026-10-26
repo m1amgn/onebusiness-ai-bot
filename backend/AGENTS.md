@@ -5,14 +5,6 @@ Use `uv` from the root or `uv --directory backend`; never bare pip.
 
 ## Layers
 
-Voice acceptance lives in application/accept_voice.py. It commits the job before
-acknowledging, stores the acknowledgement in a second unit of work, then enqueues
-and stamps it in a third. No transaction spans Telegram or the broker. Metadata
-failures after acceptance are logged safely; the recovery sweep owns failed sends.
-Bot and notification replies share application/replies.py. The seed and bot use
-dashboard_link for the fragment URL. Telegram fakes reject calls inside a unit of
-work using a task-local context variable.
-
 `domain` owns entities and Protocol ports. `application` depends on domain only.
 `infrastructure` implements ports and wraps clients. It never imports application.
 `entrypoints` owns composition roots. Import-linter enforces these directions
@@ -197,20 +189,6 @@ A stage that adds dependencies or a top-level backend directory, such as
 
 ## Redis adapters
 
-BotSettings requires a validated Telegram token and reuses web and transcription
-settings mixins. PollingLock uses owner tokens, namespaced keys and bounded calls.
-Start LockKeeper immediately after acquisition, including slow startup; renew on
-fixed monotonic slots and fail closed before the lease expires. HeartbeatTask has
-its own task and writes only after successful polling. Its Lua guards prevent an
-old owner from writing or deleting a successor's heartbeat. Shutdown stops both
-tasks before shared-timeout heartbeat cleanup and token-checked lock release.
-
-Telegram adapters live in infrastructure/telegram. The notifier maps all aiogram
-and transport failures to the domain notifier errors without exception chaining.
-Only an edit's not-modified response is success; a gone edit target maps to
-MessageGoneError. The voice source caps declared and streamed bytes under one
-30-second deadline. No Telegram adapter logs raw exceptions or response bodies.
-
 Build asynchronous clients through infrastructure/redis/client.py. Names use namespaced
 or user_channel; event routing uses internal users.id. RedisEventPublisher bounds a
 publish to one second. publish_events stops a batch after its first publication failure.
@@ -257,6 +235,30 @@ timeouts and bounded retries limit those operations; queued sends add executor b
 
 ## Bot runtime
 
+Voice acceptance lives in application/accept_voice.py. It commits the job before
+acknowledging, stores the acknowledgement in a second unit of work, then enqueues
+and stamps it in a third. No transaction spans Telegram or the broker. Metadata
+failures after acceptance are logged safely; the recovery sweep owns failed sends.
+Bot and notification replies share application/replies.py. The seed and bot use
+dashboard_link for the fragment URL. Telegram fakes reject calls inside a unit of
+work using a task-local context variable.
+
+BotSettings requires a validated Telegram token and reuses web and transcription
+settings mixins. PollingLock uses owner tokens, namespaced keys and bounded calls.
+Start LockKeeper immediately after acquisition, including slow startup; renew on
+fixed monotonic slots and fail closed before the lease expires. Register token-guarded
+release before acquisition, so a cancelled SET reply cannot strand the key.
+HeartbeatTask has its own task and writes only after successful polling. Its Lua guards prevent an
+old owner from writing or deleting a successor's heartbeat. Shutdown stops both
+tasks before shared-timeout heartbeat cleanup and token-checked lock release.
+
+Telegram adapters live in infrastructure/telegram. The notifier maps all aiogram
+and other ordinary failures to safe domain errors without exception contexts.
+Cancellation always propagates; replies explicitly disable inherited parse modes.
+Only an edit's not-modified response is success; a gone edit target maps to
+MessageGoneError. The voice source caps declared and streamed bytes under one
+30-second deadline. No Telegram adapter logs raw exceptions or response bodies.
+
 Root yarn dev:bot runs entrypoints/bot. The process owns one engine, one named
 Redis client, one extractor with an eight-second deadline, one Celery producer
 and one Telegram session. Register every resource immediately with AsyncExitStack.
@@ -274,11 +276,17 @@ InFlightUpdates tracks each handler until its task completes, including the
 error hook. Stop polling before draining, keep the Telegram session open during
 the drain, then cancel and await unfinished handlers after 15 seconds or the
 second signal. The process owns SIGINT/SIGTERM instead of aiogram. Supervise the
-keeper and heartbeat through startup and polling. PollingWatch counts successful
-getUpdates only. TokenRedactionFilter belongs on every root logging handler.
+keeper and heartbeat through startup and polling. BotStartupError is the single
+startup failure path; phases are an Enum. Only the owned startup task is cancelled
+by a startup stop, so an external cancellation always propagates. PollingWatch
+measures failed or overdue getUpdates requests; semaphore back-pressure stays healthy.
+TokenRedactionFilter belongs on every root logging handler.
 
 The offline replay is tests/acceptance/replay_s4.py with TASKBOT_ENV_FILE=/dev/null.
-Its frozen B1-B19 expectations are s4_expected.json. tests/bot_runtime.py provides
+Its frozen B1-B19 expectations are s4_expected.json. tests/bot.py owns the shared
+synthetic settings, update builder and handler/voice fixtures. Canonical
+Use task_created_text for degraded success replies and worker notification edits.
+tests/bot_runtime.py provides
 root spies over real PostgreSQL, Redis and the producer, with a fake Telegram
 transport and extractor. Root integration tests use per-session databases and
 namespaces, never development rows. A live check uses separate test credentials

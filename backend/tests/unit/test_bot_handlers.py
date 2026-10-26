@@ -1,66 +1,31 @@
-from datetime import UTC, datetime
+import asyncio
 
 import pytest
-from aiogram import Bot
-from aiogram.types import Chat, Message, Update, User, Voice
-from pydantic import PostgresDsn, SecretStr
+from aiogram.types import ErrorEvent, MessageAutoDeleteTimerChanged, User
 
-from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
-from taskbot.infrastructure.settings.bot import BotSettings
-from tests.fakes.messaging import FakeEventPublisher, FakeJobQueue
-from tests.fakes.persistence import FakeStore
-from tests.fakes.telegram import FakeUserNotifier
+from taskbot.application import replies
+from taskbot.domain.errors import NotificationError
+from taskbot.domain.extraction import Extraction, ExtractorName, TaskDraft
+from taskbot.entrypoints.bot.handlers import create_dispatcher, handle_error
+from taskbot.entrypoints.bot.runtime import InFlightUpdates
+from tests.bot import HandlerHarness, message_update
+from tests.fakes.extraction import FakeExtractor
 from tests.fakes.telegram_session import FakeTelegramSession
 
 
-def message_update(
-    number: int,
-    text: str | None,
-    *,
-    group: bool = False,
-    voice: bool = False,
-    caption: str | None = None,
-) -> Update:
-    return Update(
-        update_id=number,
-        message=Message(
-            message_id=number,
-            date=datetime.now(UTC),
-            chat=Chat(id=7, type="group" if group else "private"),
-            from_user=User(id=7, is_bot=False, first_name="Synthetic"),
-            text=text,
-            caption=caption,
-            voice=Voice(file_id="file", file_unique_id="unique", duration=35) if voice else None,
-        ),
-    )
-
-
 async def test_private_text_preserves_source_and_publishes_after_reply() -> None:
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore()
-    notifier = FakeUserNotifier(calls=store.calls)
-    publisher = FakeEventPublisher(calls=store.calls)
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    ports = build_bot_ports(
-        settings, store, HeuristicExtractor(), notifier, FakeJobQueue(), publisher
-    )
-    dispatcher = create_dispatcher(ports, InFlightUpdates())
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
+    h = HandlerHarness()
+    dispatcher = h.dispatcher()
+    async with h.bot() as bot:
         await dispatcher.feed_update(bot, message_update(1, "Buy milk"))
         await dispatcher.feed_update(bot, message_update(1, "Buy milk"))
-    assert [reply.text for reply in notifier.replies] == ["Task created: Buy milk"]
-    assert len(store.state.messages) == len(store.state.tasks) == len(publisher.events) == 1
-    event = publisher.events[0]
+    assert [reply.text for reply in h.notifier.replies] == ["Task created: Buy milk"]
+    assert h.notifier.replies[0].reply_to_message_id == 1
+    assert len(h.store.state.messages) == len(h.store.state.tasks) == len(h.publisher.events) == 1
+    event = h.publisher.events[0]
     assert event.type == "task.created"
     assert event.task.source_text == "Buy milk"
-    assert store.calls.items.index("notifier.send_reply") < store.calls.items.index(
+    assert h.store.calls.items.index("notifier.send_reply") < h.store.calls.items.index(
         "events.publish"
     )
     assert dispatcher.resolve_used_update_types() == ["message"]
@@ -69,172 +34,112 @@ async def test_private_text_preserves_source_and_publishes_after_reply() -> None
 @pytest.mark.parametrize(
     ("text", "group", "expected"),
     [
-        ("/dashboard", True, "I work only in a private chat."),
-        ("/start", True, "I work only in a private chat."),
+        ("/dashboard", True, replies.NOT_PRIVATE),
+        ("/start", True, replies.NOT_PRIVATE),
+        ("/start@other_bot", True, None),
         ("Buy milk", True, None),
-        ("🙂👍", False, "There is no text to make a task from."),
-        (
-            "/help",
-            False,
-            "Unknown command. Send a text or a voice message to create a task; "
-            "/dashboard opens your tasks.",
-        ),
+        ("🙂👍", False, replies.EMPTY_TEXT),
+        ("/help", False, replies.UNKNOWN_COMMAND),
     ],
 )
 async def test_refusals_do_not_write_tasks(text: str, group: bool, expected: str | None) -> None:
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore()
-    notifier = FakeUserNotifier()
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    ports = build_bot_ports(
-        settings, store, HeuristicExtractor(), notifier, FakeJobQueue(), FakeEventPublisher()
-    )
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
-        await create_dispatcher(ports, InFlightUpdates()).feed_update(
-            bot, message_update(1, text, group=group)
-        )
-    assert [reply.text for reply in notifier.replies] == ([] if expected is None else [expected])
-    assert not store.state.tasks
-    assert not store.state.users
+    h = HandlerHarness()
+    async with h.bot() as bot:
+        await h.dispatcher().feed_update(bot, message_update(1, text, group=group))
+    assert [item.text for item in h.notifier.replies] == ([] if expected is None else [expected])
+    if h.notifier.replies:
+        assert h.notifier.replies[0].reply_to_message_id == 1
+    assert not h.store.state.tasks
+    assert not h.store.state.users
 
 
 async def test_voice_caption_does_not_rotate_the_dashboard_token() -> None:
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore()
-    notifier = FakeUserNotifier()
-    queue = FakeJobQueue()
-    publisher = FakeEventPublisher()
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    ports = build_bot_ports(settings, store, HeuristicExtractor(), notifier, queue, publisher)
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
-        await create_dispatcher(ports, InFlightUpdates()).feed_update(
-            bot, message_update(1, None, voice=True, caption="/dashboard")
-        )
-    assert [reply.text for reply in notifier.replies] == ["Transcribing your voice message…"]
-    assert len(queue.jobs) == len(store.state.voice_jobs) == 1
-    assert store.state.users[1].token_version == 0
-    assert not publisher.events
+    h = HandlerHarness()
+    async with h.bot() as bot:
+        await h.dispatcher().feed_update(bot, message_update(1, voice=True, caption="/dashboard"))
+    assert [item.text for item in h.notifier.replies] == [replies.VOICE_ACK]
+    assert h.notifier.replies[0].reply_to_message_id == 1
+    assert len(h.queue.jobs) == len(h.store.state.voice_jobs) == 1
+    assert h.store.state.users[1].token_version == 0
+    assert not h.publisher.events
 
 
 async def test_duplicate_after_failed_reply_still_has_one_task() -> None:
-    from taskbot.domain.errors import NotificationError
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore()
-    notifier = FakeUserNotifier(failures={1: NotificationError("synthetic reply failure")})
-    publisher = FakeEventPublisher()
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    dispatcher = create_dispatcher(
-        build_bot_ports(settings, store, HeuristicExtractor(), notifier, FakeJobQueue(), publisher),
-        InFlightUpdates(),
-    )
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
+    h = HandlerHarness()
+    h.notifier.failures[1] = NotificationError("synthetic reply failure")
+    dispatcher = h.dispatcher()
+    async with h.bot() as bot:
         await dispatcher.feed_update(bot, message_update(1, "Buy milk"))
         await dispatcher.feed_update(bot, message_update(1, "Buy milk"))
-    assert len(store.state.tasks) == len(store.state.messages) == len(publisher.events) == 1
-    assert notifier.count == 1
+    assert len(h.store.state.tasks) == len(h.store.state.messages) == len(h.publisher.events) == 1
+    assert h.notifier.count == 1
 
 
 async def test_error_hook_swallows_its_own_error_without_logging_chat_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore(fail_on="users.upsert")
-    notifier = FakeUserNotifier(failures={1: RuntimeError("private notifier text")})
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    dispatcher = create_dispatcher(
-        build_bot_ports(
-            settings, store, HeuristicExtractor(), notifier, FakeJobQueue(), FakeEventPublisher()
-        ),
-        InFlightUpdates(),
-    )
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
-        await dispatcher.feed_update(bot, message_update(1, "private update text"))
+    h = HandlerHarness()
+    h.store.fail_on = "users.upsert"
+    h.notifier.failures[1] = RuntimeError("private notifier text")
+    async with h.bot() as bot:
+        await h.dispatcher().feed_update(bot, message_update(1, "private update text"))
     assert "private notifier text" not in caplog.text
     assert "private update text" not in caplog.text
-    assert notifier.count == 1
-    assert not store.state.tasks
+    assert h.notifier.count == 1
+    assert not h.store.state.tasks
+
+
+@pytest.mark.parametrize("group", [False, True])
+async def test_error_hook_replies_safely_without_a_traceback(
+    group: bool, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = HandlerHarness()
+    content = "private storage and update text"
+
+    async def fail(*args: object, **kwargs: object) -> None:
+        raise RuntimeError(content)
+
+    # Inject a failing standalone use case while keeping the real dispatcher/error hook.
+    ports = h.ports()
+    monkeypatch.setattr(ports.create_tasks, "execute", fail)
+    update = message_update(1, content, group=group)
+    if group:
+        try:
+            raise RuntimeError(content)
+        except RuntimeError as error:
+            await handle_error(ErrorEvent(update=update, exception=error), ports)
+    else:
+        async with h.bot() as bot:
+            await create_dispatcher(ports, InFlightUpdates()).feed_update(bot, update)
+    assert [item.text for item in h.notifier.replies] == (
+        [] if group else ["Something went wrong. Please try again."]
+    )
+    assert content not in caplog.text
+    assert "Traceback" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 async def test_one_word_reaches_extractor_after_a_stalled_typing_action() -> None:
-    import asyncio
-
-    from taskbot.domain.extraction import Extraction, ExtractorName, TaskDraft
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-    from tests.fakes.extraction import FakeExtractor
-
-    store = FakeStore()
-    notifier = FakeUserNotifier()
-    extractor = FakeExtractor(
+    h = HandlerHarness()
+    h.extractor = FakeExtractor(
         Extraction(
             task=TaskDraft(title="Extracted"), extractor=ExtractorName.HEURISTIC, degraded=False
         ),
-        store.calls,
-    )
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    dispatcher = create_dispatcher(
-        build_bot_ports(settings, store, extractor, notifier, FakeJobQueue(), FakeEventPublisher()),
-        InFlightUpdates(),
+        h.store.calls,
     )
     session = FakeTelegramSession()
     session.request_gates["sendChatAction"] = asyncio.Event()
-    async with Bot("123456:synthetic", session=session) as bot:
+    async with h.bot(session) as bot:
         async with asyncio.timeout(5):
-            await dispatcher.feed_update(bot, message_update(1, "Milk"))
-    assert notifier.replies[0].text == "Task created: Extracted"
-    assert store.calls.items.count("extract") == 1
+            await h.dispatcher().feed_update(bot, message_update(1, "Milk"))
+    assert h.notifier.replies[0].text == "Task created: Extracted"
+    assert h.store.calls.items.count("extract") == 1
     assert session.timeouts[0] == 2
 
 
 @pytest.mark.parametrize("kind", ["missing_sender", "bot_sender", "service", "group_voice"])
 async def test_sender_guards_and_service_updates_create_no_work(kind: str) -> None:
-    from aiogram.types import MessageAutoDeleteTimerChanged
-
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore()
-    notifier = FakeUserNotifier()
-    queue = FakeJobQueue()
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
+    h = HandlerHarness()
     update = message_update(
         1,
         None if kind in {"service", "group_voice"} else "Buy milk",
@@ -257,43 +162,22 @@ async def test_sender_guards_and_service_updates_create_no_work(kind: str) -> No
                 )
             }
         )
-    update = update.model_copy(update={"message": item})
-    dispatcher = create_dispatcher(
-        build_bot_ports(
-            settings, store, HeuristicExtractor(), notifier, queue, FakeEventPublisher()
-        ),
-        InFlightUpdates(),
-    )
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
-        await dispatcher.feed_update(bot, update)
-    assert not notifier.replies
-    assert not store.state.users
-    assert not store.state.voice_jobs
-    assert not queue.jobs
+    async with h.bot() as bot:
+        await h.dispatcher().feed_update(bot, update.model_copy(update={"message": item}))
+    assert not h.notifier.replies
+    assert not h.store.state.users
+    assert not h.store.state.voice_jobs
+    assert not h.queue.jobs
 
 
 async def test_dashboard_publishes_revocation_before_returning_the_private_link() -> None:
-    from taskbot.entrypoints.bot import build_bot_ports
-    from taskbot.entrypoints.bot.handlers import create_dispatcher
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
-    store = FakeStore()
-    notifier = FakeUserNotifier(calls=store.calls)
-    publisher = FakeEventPublisher(calls=store.calls)
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/test"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-    )
-    dispatcher = create_dispatcher(
-        build_bot_ports(settings, store, HeuristicExtractor(), notifier, FakeJobQueue(), publisher),
-        InFlightUpdates(),
-    )
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
-        await dispatcher.feed_update(bot, message_update(1, "/dashboard"))
-    assert notifier.replies[0].text.startswith("Your task board: http://localhost:5173/#token=")
-    assert store.state.users[1].token_version == 1
-    assert store.calls.items.index("events.publish") < store.calls.items.index(
+    h = HandlerHarness()
+    async with h.bot() as bot:
+        await h.dispatcher().feed_update(bot, message_update(1, "/dashboard"))
+    assert h.notifier.replies[0].text.startswith("Your task board: http://localhost:5173/#token=")
+    assert h.notifier.replies[0].reply_to_message_id == 1
+    assert h.store.state.users[1].token_version == 1
+    assert h.store.calls.items.index("events.publish") < h.store.calls.items.index(
         "notifier.send_reply"
     )
-    assert publisher.events[0].type == "auth.revoked"
+    assert h.publisher.events[0].type == "auth.revoked"

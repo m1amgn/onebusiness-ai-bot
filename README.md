@@ -83,8 +83,8 @@ voice -> commit job -> reply -> store reply id -> enqueue -> stamp
 ```
 
 Tasks come only from private chats. Commands in groups receive a private-chat
-reminder; other group content is ignored. Keep Telegram privacy mode enabled to
-avoid replies to unrelated group commands. Unknown commands receive usage text.
+reminder; commands addressed to another bot and other group content are ignored.
+Keep Telegram privacy mode enabled to avoid replies to unrelated group commands. Unknown commands receive usage text.
 Unsupported attachments receive a text-and-voice reminder. Captions and edits do
 not change tasks; forwarded messages belong to the person who forwarded them.
 
@@ -103,7 +103,8 @@ the degraded heuristic and adds a fallback notice to text replies.
 
 The bot renews its polling lock during startup and while draining. It publishes
 `heartbeat:bot` only after successful polling, under `REDIS_NAMESPACE` when set.
-Loss of ownership or sustained polling failure stops the process. Allow at least
+Loss of ownership or sustained failed polling requests stops the process. Time
+spent waiting for handler capacity counts as healthy polling. Allow at least
 30 seconds for shutdown in the delivered stack; verify the producer drain under
 the deployment's broker conditions.
 

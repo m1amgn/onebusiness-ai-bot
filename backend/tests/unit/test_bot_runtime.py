@@ -1,18 +1,35 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
-from aiogram import Bot, Dispatcher
-from aiogram.types import Chat, Message, Update, User
+from aiogram import Bot, Dispatcher, Router
+from aiogram.exceptions import TelegramNetworkError
+from aiogram.methods import GetUpdates
+from aiogram.types import ErrorEvent, Message
+from aiohttp import ClientConnectionError
+from redis.asyncio import Redis
+from redis.exceptions import ConnectionError
 
+from taskbot.entrypoints.bot.runtime import InFlightUpdates, PollingWatch, TokenRedactionFilter
+from taskbot.infrastructure.redis import bot_lock
+from taskbot.infrastructure.redis.bot_lock import (
+    LOCK_RENEW_SECONDS,
+    LOCK_STOP_AFTER_SECONDS,
+    LOCK_TTL_SECONDS,
+    REDIS_CALL_TIMEOUT_SECONDS,
+    HeartbeatTask,
+    LockKeeper,
+    PollingLock,
+)
+from tests.bot import message_update
 from tests.fakes.telegram_session import FakeTelegramSession
 
 
 async def test_polling_drain_keeps_handler_alive_until_its_reply() -> None:
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
     session = FakeTelegramSession()
     entered, finish = asyncio.Event(), asyncio.Event()
     flight = InFlightUpdates()
@@ -27,16 +44,7 @@ async def test_polling_drain_keeps_handler_alive_until_its_reply() -> None:
     dispatcher.message.register(handle)
     async with Bot("123456:synthetic", session=session) as bot:
         await bot.me()
-        update = Update(
-            update_id=1,
-            message=Message(
-                message_id=1,
-                date=datetime.now(UTC),
-                chat=Chat(id=7, type="private"),
-                from_user=User(id=7, is_bot=False, first_name="Synthetic"),
-                text="Buy milk",
-            ),
-        )
+        update = message_update(1, "Buy milk")
         session.responses.append(
             (
                 200,
@@ -63,16 +71,12 @@ async def test_polling_drain_keeps_handler_alive_until_its_reply() -> None:
 
 
 def test_token_filter_redacts_formatted_errors_and_tracebacks() -> None:
-    from taskbot.entrypoints.bot.runtime import TokenRedactionFilter
-
     record = logging.LogRecord(
         "synthetic", logging.ERROR, "test", 1, "failed %s", ("bot123456:synthetic/file",), None
     )
     try:
         raise RuntimeError("https://api.telegram.org/file/bot123456:synthetic/voice.ogg")
     except RuntimeError:
-        import sys
-
         record.exc_info = sys.exc_info()
     assert TokenRedactionFilter("123456:synthetic").filter(record)
     formatted = logging.Formatter().format(record)
@@ -82,8 +86,6 @@ def test_token_filter_redacts_formatted_errors_and_tracebacks() -> None:
 
 @pytest.mark.parametrize("skip", [False, True])
 async def test_drain_cancels_handler_on_deadline_or_second_signal(skip: bool) -> None:
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
     session = FakeTelegramSession()
     entered, cancelled = asyncio.Event(), asyncio.Event()
     flight = InFlightUpdates()
@@ -100,16 +102,7 @@ async def test_drain_cancels_handler_on_deadline_or_second_signal(skip: bool) ->
     dispatcher.message.register(handle)
     async with Bot("123456:synthetic", session=session) as bot:
         await bot.me()
-        item = Update(
-            update_id=1,
-            message=Message(
-                message_id=1,
-                date=datetime.now(UTC),
-                chat=Chat(id=7, type="private"),
-                from_user=User(id=7, is_bot=False, first_name="Synthetic"),
-                text="Buy milk",
-            ),
-        )
+        item = message_update(1, "Buy milk")
         session.responses.append(
             (
                 200,
@@ -133,11 +126,6 @@ async def test_drain_cancels_handler_on_deadline_or_second_signal(skip: bool) ->
 
 
 async def test_error_hook_reply_is_part_of_the_drain() -> None:
-    from aiogram import Router
-    from aiogram.types import ErrorEvent
-
-    from taskbot.entrypoints.bot.runtime import InFlightUpdates
-
     session = FakeTelegramSession()
     entered, finish = asyncio.Event(), asyncio.Event()
     dispatcher = Dispatcher(disable_fsm=True)
@@ -159,16 +147,7 @@ async def test_error_hook_reply_is_part_of_the_drain() -> None:
     dispatcher.include_router(router)
     async with Bot("123456:synthetic", session=session) as bot:
         await bot.me()
-        item = Update(
-            update_id=1,
-            message=Message(
-                message_id=1,
-                date=datetime.now(UTC),
-                chat=Chat(id=7, type="private"),
-                from_user=User(id=7, is_bot=False, first_name="Synthetic"),
-                text="Buy milk",
-            ),
-        )
+        item = message_update(1, "Buy milk")
         session.responses.append(
             (
                 200,
@@ -192,9 +171,7 @@ async def test_error_hook_reply_is_part_of_the_drain() -> None:
         assert "sendMessage" in session.methods
 
 
-async def test_poll_health_uses_successful_getupdates_only() -> None:
-    from taskbot.entrypoints.bot.runtime import PollingWatch
-
+async def test_poll_health_counts_failed_attempts_and_outstanding_requests() -> None:
     watch = PollingWatch(failure_seconds=0.03)
     watch.start()
     session = FakeTelegramSession()
@@ -203,20 +180,153 @@ async def test_poll_health_uses_successful_getupdates_only() -> None:
         await bot.me()
         assert not watch.healthy()
         await bot.get_updates()
+        await asyncio.sleep(0.04)
         assert watch.healthy()
+        assert not watch.failed()
+        session.request_errors["getUpdates"] = RuntimeError("synthetic")
+        with pytest.raises(RuntimeError):
+            await bot.get_updates()
+        assert not watch.failed()
         await asyncio.sleep(0.04)
         assert watch.failed()
+        del session.request_errors["getUpdates"]
+        await bot.get_updates()
+        assert watch.healthy()
+        session.request_gates["getUpdates"] = asyncio.Event()
+        pending = asyncio.create_task(bot.get_updates())
+        try:
+            await asyncio.sleep(0.04)
+            assert watch.failed()
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_backpressure_is_healthy_and_keeps_writing_heartbeats(  # noqa: PLR0915 - One SDK/heartbeat lifecycle.
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    watch = PollingWatch(failure_seconds=0.03)
+    watch.start()
+    session = FakeTelegramSession()
+    session.middleware(watch)
+
+    dispatcher = Dispatcher(disable_fsm=True)
+    entered, finish, all_dispatched = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def handle(message: Message) -> None:
+        entered.set()
+        if message.message_id == 6:
+            all_dispatched.set()
+        await finish.wait()
+
+    dispatcher.message.register(handle)
+    lock = PollingLock(Mock(spec=Redis), "synthetic")
+    lock.acquired_at = asyncio.get_running_loop().time()
+    keeper = LockKeeper(lock)
+    writes: list[float] = []
+
+    async def heartbeat_write() -> bool:
+        writes.append(asyncio.get_running_loop().time())
+        return True
+
+    monkeypatch.setattr(lock, "write_heartbeat", heartbeat_write)
+    async with Bot("123456:synthetic", session=session) as bot:
+        await bot.me()
+        session.responses.append(
+            (
+                200,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "result": [
+                            message_update(i, "Buy milk").model_dump(mode="json", exclude_none=True)
+                            for i in range(1, 7)
+                        ],
+                    }
+                ),
+            )
+        )
+        polling = asyncio.create_task(
+            dispatcher.start_polling(
+                bot, handle_signals=False, close_bot_session=False, tasks_concurrency_limit=2
+            )
+        )
+        heartbeat = asyncio.create_task(
+            HeartbeatTask(
+                lock, keeper, healthy=watch.healthy, failed=watch.failed, interval_seconds=0.01
+            ).run()
+        )
+        try:
+            async with asyncio.timeout(2):
+                await entered.wait()
+                await asyncio.sleep(0.1)
+                assert session.methods.count("getUpdates") == 1
+                assert not watch.failed()
+                assert watch.healthy()
+                assert len(writes) >= 3
+                assert not heartbeat.done()
+        finally:
+            finish.set()
+            async with asyncio.timeout(2):
+                await all_dispatched.wait()
+            await dispatcher.stop_polling()
+            await polling
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
 
 def test_token_filter_handles_a_token_bearing_telegram_network_error() -> None:
-    from aiogram.exceptions import TelegramNetworkError
-    from aiogram.methods import GetUpdates
-    from aiohttp import ClientConnectionError
-
-    from taskbot.entrypoints.bot.runtime import TokenRedactionFilter
-
     upstream = ClientConnectionError("https://api.telegram.org/bot123456:synthetic/getUpdates")
     error = TelegramNetworkError(method=GetUpdates(), message=str(upstream))
     record = logging.LogRecord("synthetic", logging.ERROR, "test", 1, "%s", (error,), None)
     TokenRedactionFilter("123456:synthetic").filter(record)
     assert "123456:synthetic" not in logging.Formatter().format(record)
+
+
+def test_production_lease_timings_leave_a_timeout_margin() -> None:
+    assert LOCK_STOP_AFTER_SECONDS + REDIS_CALL_TIMEOUT_SECONDS < LOCK_TTL_SECONDS
+    assert LOCK_RENEW_SECONDS < LOCK_STOP_AFTER_SECONDS
+    assert LOCK_STOP_AFTER_SECONDS % LOCK_RENEW_SECONDS == 0
+
+
+async def test_keeper_uses_fixed_slots_and_stops_within_the_conservative_bound(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Clock:
+        now = 100.0
+
+        def time(self) -> float:
+            return self.now
+
+        async def sleep(self, delay: float) -> None:
+            self.now += delay
+
+    clock = Clock()
+    lock = bot_lock.PollingLock(Mock(spec=Redis), "synthetic", call_timeout=0.04)
+    lock.acquired_at = clock.now
+    starts: list[float] = []
+
+    async def renew() -> None:
+        starts.append(clock.now)
+        if len(starts) == 1:
+            clock.now += 0.12
+        elif len(starts) == 2:
+            clock.now += 0.02
+        else:
+            clock.now += 0.04
+            if len(starts) > 10:
+                raise AssertionError("keeper did not stop")
+            raise ConnectionError("private Redis error")
+
+    monkeypatch.setattr(lock, "renew", renew)
+    monkeypatch.setattr(
+        bot_lock, "asyncio", SimpleNamespace(get_running_loop=lambda: clock, sleep=clock.sleep)
+    )
+    keeper = bot_lock.LockKeeper(lock, renew_seconds=0.05, stop_after_seconds=0.15)
+    await keeper.run()
+    assert starts == pytest.approx([100.05, 100.20, 100.25, 100.30, 100.35])
+    assert keeper.lost
+    assert clock.now <= keeper.last_renewed + 0.15 + lock.call_timeout + 0.005
+    assert "ConnectionError" in caplog.text
+    assert "private Redis error" not in caplog.text

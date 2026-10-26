@@ -51,21 +51,26 @@ class InFlightUpdates(BaseMiddleware):
             await asyncio.gather(waiter, return_exceptions=True)
 
 
+POLLING_FAILURE_SECONDS = 60
+
+
 class PollingWatch(BaseRequestMiddleware):
-    def __init__(self, *, failure_seconds: float = 60) -> None:
+    def __init__(self, *, failure_seconds: float = POLLING_FAILURE_SECONDS) -> None:
         self._failure_seconds = failure_seconds
-        self._started: float | None = None
-        self._last_success: float | None = None
+        self._has_success = False
+        self._pending_since: float | None = None
+        self._failed_since: float | None = None
         self.last_error = "NoSuccessfulPoll"
 
     def start(self) -> None:
-        self._started = asyncio.get_running_loop().time()
+        self._has_success = False
+        self._pending_since = self._failed_since = None
 
     def healthy(self) -> bool:
-        return self._last_success is not None and not self.failed()
+        return self._has_success and not self.failed()
 
     def failed(self) -> bool:
-        since = self._last_success if self._last_success is not None else self._started
+        since = self._failed_since if self._failed_since is not None else self._pending_since
         return (
             since is not None and asyncio.get_running_loop().time() - since >= self._failure_seconds
         )
@@ -76,15 +81,23 @@ class PollingWatch(BaseRequestMiddleware):
         bot: Bot,
         method: TelegramMethod[TelegramType],
     ) -> Response[TelegramType]:
+        polling = isinstance(method, GetUpdates)
+        if not polling:
+            return await make_request(bot, method)
+        self._pending_since = asyncio.get_running_loop().time()
         try:
             result = await make_request(bot, method)
         except Exception as error:
-            if isinstance(method, GetUpdates):
-                self.last_error = type(error).__name__
+            self.last_error = type(error).__name__
+            if self._failed_since is None:
+                self._failed_since = self._pending_since
             raise
-        if isinstance(method, GetUpdates):
-            self._last_success = asyncio.get_running_loop().time()
-        return result
+        else:
+            self._has_success = True
+            self._failed_since = None
+            return result
+        finally:
+            self._pending_since = None
 
 
 class TokenRedactionFilter(logging.Filter):

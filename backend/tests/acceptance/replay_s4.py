@@ -4,128 +4,67 @@ import asyncio
 import json
 import re
 import sys
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
 
 from aiogram import Bot
-from aiogram.types import (
-    Chat,
-    Message,
-    MessageOriginHiddenUser,
-    Sticker,
-    Update,
-    User,
-    Voice,
-)
-from pydantic import PostgresDsn, SecretStr
+from aiogram.types import Update
 
-from taskbot.domain.voice_jobs import TranscriptionProvider
-from taskbot.entrypoints.bot import build_bot_ports
-from taskbot.entrypoints.bot.handlers import create_dispatcher
-from taskbot.entrypoints.bot.runtime import InFlightUpdates
 from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
-from taskbot.infrastructure.settings.bot import BotSettings
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-
-
-def settings(*, keyless: bool = False) -> BotSettings:
-    return BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn("postgresql+asyncpg://localhost/synthetic"),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-        transcription_provider=TranscriptionProvider.OPENAI
-        if keyless
-        else TranscriptionProvider.WHISPER_SERVER,
-        task_extractor="claude" if keyless else "heuristic",
-        anthropic_api_key=None,
-        openai_api_key=None,
-        web_base_url="http://localhost:5173",
-    )
+# A directly executed replay needs the backend tests package on the import path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tests.bot import TOKEN, HandlerHarness, bot_settings
+from tests.bot import message_update as message
+from tests.fakes.telegram_session import FakeTelegramSession
 
 
-def message(
-    number: int,
-    *,
-    text: str | None = None,
-    duration: int | None = None,
-    size: int | None = 100,
-    group: bool = False,
-    caption: str | None = None,
-    sticker: bool = False,
-    forwarded: bool = False,
-) -> Update:
-    item = Message(
-        message_id=number,
-        date=datetime(2026, 1, 1, tzinfo=UTC),
-        chat=Chat(id=7, type="group" if group else "private"),
-        from_user=User(id=7, is_bot=False, first_name="Synthetic"),
-        text=text,
-        caption=caption,
-        voice=None
-        if duration is None
-        else Voice(file_id="file", file_unique_id="unique", duration=duration, file_size=size),
-        sticker=Sticker(
-            file_id="sticker",
-            file_unique_id="unique",
-            type="regular",
-            width=10,
-            height=10,
-            is_animated=False,
-            is_video=False,
-        )
-        if sticker
-        else None,
-        forward_origin=MessageOriginHiddenUser(
-            date=datetime(2026, 1, 1, tzinfo=UTC), sender_user_name="Synthetic"
-        )
-        if forwarded
-        else None,
-    )
-    return Update(update_id=number, message=item)
+@dataclass(frozen=True)
+class Row:
+    name: str
+    updates: tuple[Update, ...]
+    keyless: bool = False
+    degraded: bool = False
 
 
-def acceptance_updates() -> list[tuple[str, Update]]:
+def acceptance_updates() -> list[Row]:
     first = message(1, text="Buy milk")
     voice = message(4, duration=35)
     edited = message(1, text="Buy oat milk").message
     return [
-        ("B1", first),
-        ("B2", message(2, text="Call the bank about the card")),
-        ("B3", message(3, text="🙂👍")),
-        ("B4", voice),
-        ("B5", message(5, duration=150)),
-        ("B6", message(6, duration=30, size=12_000_000)),
-        ("B7", message(7, duration=30, size=None)),
-        ("B8", voice),
-        ("B9", first),
-        ("B10", message(10, text="/dashboard")),
-        ("B11", message(11, text="/dashboard", group=True)),
-        ("B12", message(12, text="Buy milk", group=True)),
-        ("B13", message(13, sticker=True)),
-        ("B14", message(14, text="/help")),
-        ("B15", Update(update_id=15, edited_message=edited)),
-        ("B16", message(16, text="Buy bread", forwarded=True)),
-        ("B17", message(17, duration=20, caption="/dashboard")),
-        ("B18", message(18, text="/start")),
-        ("B19", message(19, text="/start")),
+        Row("B1", (first,)),
+        Row("B2", (message(2, text="Call the bank about the card"),), degraded=True),
+        Row("B3", (message(3, text="🙂👍"),)),
+        Row("B4", (voice,)),
+        Row("B5", (message(5, duration=150),)),
+        Row("B6", (message(6, duration=30, size=12_000_000),)),
+        Row("B7", (message(7, duration=30, size=None),)),
+        Row("B8", (voice,)),
+        Row("B9", (first,)),
+        Row("B10", (message(10, text="/dashboard"),)),
+        Row("B11", (message(11, text="/dashboard", group=True),)),
+        Row("B12", (message(12, text="Buy milk", group=True),)),
+        Row("B13", (message(13, sticker=True),)),
+        Row("B14", (message(14, text="/help"),)),
+        Row("B15", (Update(update_id=15, edited_message=edited),)),
+        Row("B16", (message(16, text="Buy bread", forwarded=True),)),
+        Row("B17", (message(17, duration=20, caption="/dashboard"),)),
+        Row("B18", (message(18, text="/start"),)),
+        Row(
+            "B19",
+            (message(19, text="/start"), message(20, text="Buy eggs"), message(21, duration=20)),
+            keyless=True,
+            degraded=True,
+        ),
     ]
 
 
 async def run_rows() -> list[dict[str, object]]:
-    sys.path.insert(0, str(BACKEND_ROOT))
-    from tests.fakes.messaging import FakeEventPublisher, FakeJobQueue
-    from tests.fakes.persistence import FakeStore
-    from tests.fakes.telegram import FakeUserNotifier
-    from tests.fakes.telegram_session import FakeTelegramSession
-
-    store = FakeStore()
-    notifier = FakeUserNotifier(calls=store.calls)
-    queue = FakeJobQueue(calls=store.calls)
-    publisher = FakeEventPublisher(calls=store.calls)
+    h = HandlerHarness()
+    store, notifier, queue, publisher = h.store, h.notifier, h.queue, h.publisher
     rows: list[dict[str, object]] = []
-    async with Bot("123456:synthetic", session=FakeTelegramSession()) as bot:
-        for name, update in acceptance_updates():
+    async with Bot(TOKEN, session=FakeTelegramSession()) as bot:
+        for row in acceptance_updates():
             before = (
                 len(notifier.replies),
                 len(queue.jobs),
@@ -135,22 +74,18 @@ async def run_rows() -> list[dict[str, object]]:
                 set(store.state.voice_jobs),
             )
             versions = sum(user.token_version for user in store.state.users.values())
-            ports = build_bot_ports(
-                settings(keyless=name == "B19"),
-                store,
-                HeuristicExtractor(degraded=name in {"B2", "B19"}),
-                notifier,
-                queue,
-                publisher,
-            )
-            await create_dispatcher(ports, InFlightUpdates()).feed_update(bot, update)
+            h.settings = bot_settings(keyless=row.keyless)
+            h.extractor = HeuristicExtractor(degraded=row.degraded)
+            dispatcher = h.dispatcher()
+            for update in row.updates:
+                await dispatcher.feed_update(bot, update)
             new_messages = [
                 item for key, item in store.state.messages.items() if key not in before[3]
             ]
             new_tasks = [item for key, item in store.state.tasks.items() if key not in before[4]]
             rows.append(
                 {
-                    "row": name,
+                    "row": row.name,
                     "replies": [
                         re.sub(r"#token=[A-Za-z0-9_-]+", "#token=<token>", item.text)
                         for item in notifier.replies[before[0] :]
@@ -162,15 +97,25 @@ async def run_rows() -> list[dict[str, object]]:
                     "events": [item.type for item in publisher.events[before[2] :]],
                     "degraded": [item.degraded for item in new_messages],
                     "source_texts": [
-                        store.state.messages[item.inbound_message_id].text for item in new_tasks
+                        event.task.source_text
+                        for event in publisher.events[before[2] :]
+                        if event.type == "task.created"
+                    ],
+                    "reply_to": [
+                        item.reply_to_message_id for item in notifier.replies[before[0] :]
+                    ],
+                    "accepted_voice": [
+                        {"status": str(item.status), "ack_message_id": item.ack_message_id}
+                        for key, item in store.state.voice_jobs.items()
+                        if key not in before[5]
                     ],
                     "token_rotated": sum(user.token_version for user in store.state.users.values())
                     > versions,
                 }
             )
-            if name == "B15":
+            if row.name == "B15":
                 assert store.state.tasks[1].title == "Buy milk"
-            if name == "B16":
+            if row.name == "B16":
                 assert store.state.users[new_tasks[0].user_id].telegram_user_id == 7
     return rows
 

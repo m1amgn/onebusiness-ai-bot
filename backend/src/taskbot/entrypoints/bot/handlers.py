@@ -1,5 +1,6 @@
 import logging
 from contextlib import suppress
+from typing import assert_never
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
@@ -28,7 +29,7 @@ async def reply(message: Message, ports: BotPorts, text: str) -> None:
             message.chat.id, text, reply_to_message_id=message.message_id
         )
     except NOTIFIER_ERRORS as error:
-        logger.warning("Telegram reply failed (%s)", type(error).__name__)
+        logger.warning("Telegram reply failed (%s: %s)", type(error).__name__, error)
 
 
 def identity(message: Message) -> TelegramIdentity:
@@ -45,8 +46,14 @@ def ignored_sender(message: Message) -> bool:
     return message.from_user is None or message.from_user.is_bot
 
 
-async def handle_nonprivate(message: Message, ports: BotPorts) -> None:
+async def handle_nonprivate(message: Message, ports: BotPorts, bot: Bot) -> None:
     if message.text is not None and message.text.startswith("/"):
+        command = message.text.split(maxsplit=1)[0]
+        if (
+            "@" in command
+            and command.rsplit("@", 1)[1].casefold() != ((await bot.me()).username or "").casefold()
+        ):
+            return
         await reply(message, ports, replies.NOT_PRIVATE)
 
 
@@ -85,9 +92,7 @@ async def handle_text(message: Message, ports: BotPorts, bot: Bot) -> None:
         return
     if isinstance(created, DuplicateMessage):
         return
-    text = replies.TASK_CREATED.format(title=created.tasks[0].title)
-    if created.message.degraded:
-        text += "\n" + replies.DEGRADED_LINE
+    text = replies.task_created_text(created.tasks[0].title, created.message.degraded)
     await reply(message, ports, text)
     await publish_events(ports.publisher, created.events)
 
@@ -107,11 +112,14 @@ async def handle_voice(message: Message, ports: BotPorts) -> None:
         )
     )
     if isinstance(result, VoiceRefused):
-        await reply(
-            message,
-            ports,
-            replies.VOICE_TOO_LONG if result.reason == "too_long" else replies.VOICE_TOO_LARGE,
-        )
+        match result.reason:
+            case "too_long":
+                text = replies.VOICE_TOO_LONG
+            case "too_large":
+                text = replies.VOICE_TOO_LARGE
+            case _:
+                assert_never(result.reason)
+        await reply(message, ports, text)
 
 
 async def handle_unsupported(message: Message, ports: BotPorts) -> None:

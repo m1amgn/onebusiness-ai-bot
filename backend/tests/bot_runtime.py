@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 from aiogram import Bot
 from celery import Celery
-from pydantic import PostgresDsn, RedisDsn, SecretStr
+from pydantic import PostgresDsn, RedisDsn
 from redis.asyncio import Redis
 from sqlalchemy import Engine, event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -23,6 +23,7 @@ from taskbot.infrastructure.redis.bot_lock import HeartbeatTask, LockKeeper, Pol
 from taskbot.infrastructure.redis.client import create_redis_client
 from taskbot.infrastructure.settings.bot import BotSettings
 from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
+from tests.bot import bot_settings
 from tests.fakes.telegram_session import FakeTelegramSession
 from tests.redis_sessions import RedisSession
 
@@ -58,10 +59,29 @@ class BotSession(FakeTelegramSession):
 class CountingExtractor:
     def __init__(self) -> None:
         self.texts: list[str] = []
+        self.entered = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.gate: asyncio.Event | None = None
+        self.ten_active = asyncio.Event()
+        self.active = 0
+        self.maximum_active = 0
 
     async def extract(self, text: MessageText) -> Extraction:
         self.texts.append(text.value)
-        return await HeuristicExtractor().extract(text)
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        self.entered.set()
+        if self.active == 10:
+            self.ten_active.set()
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+            return await HeuristicExtractor().extract(text)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        finally:
+            self.active -= 1
 
 
 @dataclass
@@ -106,11 +126,11 @@ class BotFactories:
         return client
 
     def make_lock(self, client: Redis, namespace: str) -> PollingLock:
-        self.owned.lock = PollingLock(client, namespace, ttl_seconds=0.5, call_timeout=0.1)
+        self.owned.lock = PollingLock(client, namespace, ttl_seconds=2, call_timeout=0.3)
         return self.owned.lock
 
     def make_keeper(self, lock: PollingLock) -> LockKeeper:
-        return LockKeeper(lock, renew_seconds=0.05, stop_after_seconds=0.25)
+        return LockKeeper(lock, renew_seconds=0.1, stop_after_seconds=1)
 
     def make_app(self, *, broker_url: str, namespace: str) -> Celery:
         self.owned.builds.append("app")
@@ -171,15 +191,15 @@ def configure_bot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> BotHarness:
     monkeypatch.setenv("TASKBOT_ENV_FILE", "/dev/null")
-    settings = BotSettings(
-        _env_file=None,
-        database_url=PostgresDsn(database_url),
-        redis_url=RedisDsn(redis_session.redis_url),
-        celery_broker_url=RedisDsn(redis_session.broker_url),
-        redis_namespace=redis_session.child(),
-        telegram_bot_token=SecretStr("123456:synthetic"),
-        task_extractor="heuristic",
-        transcription_provider=TranscriptionProvider.FAKE,
+    settings = bot_settings().model_copy(
+        update=dict(
+            database_url=PostgresDsn(database_url),
+            redis_url=RedisDsn(redis_session.redis_url),
+            celery_broker_url=RedisDsn(redis_session.broker_url),
+            redis_namespace=redis_session.child(),
+            task_extractor="heuristic",
+            transcription_provider=TranscriptionProvider.FAKE,
+        )
     )
     owned = BotHarness(settings)
 
