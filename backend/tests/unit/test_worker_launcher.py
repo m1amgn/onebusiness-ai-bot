@@ -1,0 +1,149 @@
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+from pydantic import PostgresDsn, ValidationError
+
+from taskbot.entrypoints.settings import load_settings
+from taskbot.entrypoints.worker.launcher import (
+    beat_schedule_path,
+    build_worker_argv,
+    launch,
+    worker_environment,
+)
+from taskbot.infrastructure.settings.worker import BrokerSettings, WorkerSettings
+
+ROOT = Path(__file__).resolve().parents[3]
+DATABASE_URL = "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:1/taskbot_test_0_00000000"
+
+
+@pytest.fixture(autouse=True)
+def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TASKBOT_ENV_FILE", "/dev/null")
+    for name in (
+        "WORKER_ROLE",
+        "DATABASE_URL",
+        "TELEGRAM_BOT_TOKEN",
+        "REDIS_NAMESPACE",
+        "REDIS_URL",
+        "CELERY_BROKER_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_worker_settings_need_role_and_database_but_no_provider_or_token() -> None:
+    with pytest.raises(ValidationError) as caught:
+        WorkerSettings()
+    assert {error["loc"][0] for error in caught.value.errors()} == {"worker_role", "database_url"}
+    settings = WorkerSettings(worker_role="notify", database_url=PostgresDsn(DATABASE_URL))
+    assert settings.telegram_bot_token is None
+    assert not any(
+        "provider" in name or "extractor" in name for name in WorkerSettings.model_fields
+    )
+    assert BrokerSettings().broker_url == "redis://localhost:6379/1"
+
+
+@pytest.mark.parametrize(
+    ("role", "queue", "concurrency"),
+    [("transcribe", "transcription", "1"), ("notify", "notification", "2")],
+)
+def test_launcher_arguments(role: str, queue: str, concurrency: str) -> None:
+    expected = [
+        "-A",
+        "taskbot.entrypoints.worker",
+        "worker",
+        "-Q",
+        queue,
+        "-n",
+        role + "@%h",
+        "--pool",
+        "prefork",
+        "--concurrency",
+        concurrency,
+        "--without-gossip",
+        "--without-mingle",
+        "--without-heartbeat",
+        "-l",
+        "INFO",
+    ]
+    if role == "notify":
+        expected += ["-B", "-s", "/tmp/schedule"]
+    assert build_worker_argv(role, "/tmp/schedule") == expected
+
+
+def test_environment_and_beat_files_are_scoped() -> None:
+    original = {"WORKER_ROLE": "notify"}
+    assert worker_environment(original, "darwin") == {**original, "FORKED_BY_MULTIPROCESSING": "1"}
+    assert worker_environment(original, "linux") == original
+    assert original == {"WORKER_ROLE": "notify"}
+    assert beat_schedule_path("test:t1:") == str(
+        Path(tempfile.gettempdir()) / "celerybeat-schedule-test_t1_"
+    )
+    assert beat_schedule_path("") == str(Path(tempfile.gettempdir()) / "celerybeat-schedule")
+
+
+@pytest.mark.parametrize("arguments", [[], ["bogus"]])
+def test_invalid_or_missing_role_never_uses_dotenv(
+    arguments: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def refuse_exec(*args: object) -> None:
+        raise AssertionError("Invalid role reached Celery exec")
+
+    monkeypatch.setattr(os, "execve", refuse_exec)
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("WORKER_ROLE=notify\nDATABASE_URL=" + DATABASE_URL + "\n")
+    monkeypatch.setenv("TASKBOT_ENV_FILE", str(dotenv))
+    with pytest.raises(SystemExit) as caught:
+        launch(arguments)
+    assert caught.value.code == 2
+    assert "Invalid configuration: WORKER_ROLE" in capsys.readouterr().err
+
+
+def test_process_role_and_extra_arguments_reach_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, list[str], dict[str, str]]] = []
+    monkeypatch.setenv("WORKER_ROLE", "notify")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(
+        os, "execve", lambda executable, argv, env: calls.append((executable, argv, env))
+    )
+    launch(["--include", "x"])
+    executable, argv, env = calls[0]
+    assert executable == sys.executable
+    assert argv[:3] == [sys.executable, "-m", "celery"]
+    assert argv[-2:] == ["--include", "x"]
+    assert env["WORKER_ROLE"] == "notify"
+
+
+def test_validation_errors_do_not_echo_secret_inputs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("WORKER_ROLE", "notify")
+    monkeypatch.setenv("DATABASE_URL", "https://test:synthetic-secret@bad")
+    with pytest.raises(SystemExit) as caught:
+        load_settings(WorkerSettings)
+    assert caught.value.code == 2
+    output = capsys.readouterr().err
+    assert "DATABASE_URL" in output
+    assert "synthetic-secret" not in output
+
+
+async def test_developer_command_rejects_invalid_role() -> None:
+    from tests.processes import run_process
+
+    result = await run_process(
+        "yarn",
+        "dev:worker",
+        "bogus",
+        cwd=ROOT,
+        env={**os.environ, "TASKBOT_ENV_FILE": "/dev/null"},
+        timeout_seconds=10,
+    )
+    assert result.returncode != 0
+    assert "Invalid configuration: WORKER_ROLE" in result.stderr

@@ -67,8 +67,14 @@ files = ["src", "tests", "alembic"]
 # These SDK entry modules ship no typing marker. Keep the exception at their boundary;
 # strict checks still apply to the adapters and domain ports that wrap them.
 [[tool.mypy.overrides]]
-module = ["celery", "kombu.exceptions"]
+module = ["celery", "celery.signals", "celery.app.task", "billiard", "billiard.util", "billiard.exceptions", "kombu.exceptions"]
 ignore_missing_imports = true
+
+# Celery task decorators have no typed signature. Scope this to test registrations;
+# the task bodies and the production runtime remain under every other strict rule.
+[[tool.mypy.overrides]]
+module = ["tests.worker_tasks"]
+disallow_untyped_decorators = false
 
 [tool.pydantic-mypy]
 init_typed = true

@@ -1,0 +1,338 @@
+"""Owned real-worker processes, namespaced broker traffic and file-backed task receipts."""
+
+import asyncio
+import json
+import os
+import pty
+import signal
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager, suppress
+from dataclasses import dataclass
+from pathlib import Path
+from typing import BinaryIO
+from uuid import uuid4
+
+from celery import Celery
+
+from taskbot.entrypoints.worker.launcher import beat_schedule_path
+from taskbot.infrastructure.celery.app import create_celery_app
+from tests.integration.settings import InfraTestSettings
+from tests.processes import ProcessResult, run_process
+
+BACKEND = Path(__file__).resolve().parents[1]
+TERMINAL_SHUTDOWN_TIMEOUT_SECONDS = 30.0
+DATABASE_URL = "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:1/taskbot_test_0_00000000"
+
+
+def read_records(path: Path, marker: str) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    return [
+        row
+        for line in path.read_text().splitlines()
+        if (row := json.loads(line))["marker"] == marker or row.get("event") == marker
+    ]
+
+
+async def wait_records(
+    path: Path, marker: str, *, count: int = 1, timeout_seconds: float = 10
+) -> list[dict[str, object]]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        rows = read_records(path, marker)
+        if len(rows) >= count:
+            return rows
+        await asyncio.sleep(0.05)
+    raise AssertionError(
+        f"Timed out waiting for {count} {marker} records: {read_records(path, marker)}"
+    )
+
+
+def worker_environment(namespace: str, log_dir: Path) -> dict[str, str]:
+    if not namespace.startswith("taskbot_test_"):
+        raise ValueError("Workers require an owned test namespace")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    settings = InfraTestSettings()
+    env = dict(os.environ)
+    env.pop("TELEGRAM_BOT_TOKEN", None)
+    for key in (
+        "TASKBOT_TEST_FAIL_CHILD_RUNTIME",
+        "TASKBOT_TEST_REPLACEMENT_INIT_DELAY",
+        "TASKBOT_TEST_ALIVE_TIMEOUT",
+    ):
+        env.pop(key, None)
+    env.update(
+        REDIS_URL=str(settings.redis_url),
+        CELERY_BROKER_URL=settings.broker_url,
+        REDIS_NAMESPACE=namespace,
+        TASKBOT_ENV_FILE="/dev/null",
+        DATABASE_URL=DATABASE_URL,
+        TASKBOT_TEST_PARENT_PID=str(os.getpid()),
+        PYTHONUNBUFFERED="1",
+        TASKBOT_TEST_CHILD_STARTS=str(log_dir / ("child-" + uuid4().hex)),
+    )
+    return env
+
+
+def process_groups() -> list[tuple[int, int]]:
+    result = subprocess.run(
+        ["ps", "-axo", "pid=,pgid="], capture_output=True, text=True, check=True, timeout=5
+    )
+    return [
+        (int(fields[0]), int(fields[1]))
+        for row in result.stdout.splitlines()
+        if len(fields := row.split()) == 2
+    ]
+
+
+def group_pids(group: int) -> list[int]:
+    return [pid for pid, candidate in process_groups() if candidate == group]
+
+
+def session_groups(session_id: int) -> set[int]:
+    # start_new_session makes the recorded subprocess PID our ownership boundary,
+    # even before the supervisor can write any diagnostic receipt.
+    groups: set[int] = set()
+    for pid, group in process_groups():
+        with suppress(ProcessLookupError):
+            if group > 1 and os.getsid(pid) == session_id:
+                groups.add(group)
+    return groups
+
+
+@dataclass
+class RunningWorker:
+    role: str
+    namespace: str
+    process: asyncio.subprocess.Process
+    app: Celery
+    env: dict[str, str]
+    log_path: Path
+    node: str
+    queue: str
+    schedule_path: Path
+    terminal_fd: int | None = None
+    main_pid: int | None = None
+
+    @property
+    def terminal_state(self) -> dict[str, int]:
+        return dict(json.loads(Path(self.env["TASKBOT_TEST_TERMINAL_STATE"]).read_text()))
+
+    def ctrl_c(self) -> None:
+        if self.terminal_fd is None:
+            raise RuntimeError("Worker has no controlling terminal")
+        os.write(self.terminal_fd, b"\x03")
+
+    @property
+    def pid(self) -> int:
+        return self.main_pid or self.process.pid
+
+    async def send(self, name: str, *, countdown: int = 0, **kwargs: object) -> None:
+        await asyncio.to_thread(
+            self.app.send_task, name, kwargs=kwargs, queue=self.queue, countdown=countdown or None
+        )
+
+    async def cli_ping(self) -> ProcessResult:
+        return await run_process(
+            sys.executable,
+            "-m",
+            "celery",
+            "-A",
+            "taskbot.entrypoints.worker",
+            "inspect",
+            "ping",
+            "-d",
+            self.node,
+            "--timeout",
+            "2",
+            cwd=BACKEND,
+            env=self.env,
+            timeout_seconds=8,
+        )
+
+    async def ready(self) -> None:
+        deadline = time.monotonic() + 30
+        while self.process.returncode is None and time.monotonic() < deadline:
+            result = await asyncio.to_thread(
+                self.app.control.inspect(destination=[self.node], timeout=1).ping
+            )
+            if result and self.node in result:
+                if self.terminal_fd is not None:
+                    stats = await asyncio.to_thread(
+                        self.app.control.inspect(destination=[self.node], timeout=1).stats
+                    )
+                    self.main_pid = int(stats[self.node]["pid"])
+                return
+            await asyncio.sleep(0.1)
+        raise AssertionError("Worker did not become ready: " + self.log_path.read_text())
+
+    async def stop(self) -> None:
+        if self.terminal_fd is not None:
+            await self._stop_terminal()
+            return
+        if self.process.returncode is None:
+            with suppress(ProcessLookupError):
+                os.kill(self.pid, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(self.process.wait(), 30)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    os.killpg(self.pid, signal.SIGKILL)
+                await self.process.wait()
+        deadline = time.monotonic() + 3
+        # Process-group membership has no portable asynchronous notification.
+        while group_pids(self.pid) and time.monotonic() < deadline:  # noqa: ASYNC110
+            await asyncio.sleep(0.1)
+        remaining = group_pids(self.pid)
+        if remaining:
+            with suppress(ProcessLookupError):
+                os.killpg(self.pid, signal.SIGKILL)
+            await asyncio.sleep(0.3)
+        assert not group_pids(self.pid), f"Worker group survived: {remaining}"
+
+    async def _stop_terminal(self) -> None:
+        session_id = self.process.pid
+        try:
+            if self.main_pid is not None:
+                with suppress(ProcessLookupError):
+                    if os.getsid(self.main_pid) == session_id:
+                        os.kill(self.main_pid, signal.SIGTERM)
+            elif self.process.returncode is None:
+                # Stop startup at its owner when readiness has not identified Celery.
+                with suppress(ProcessLookupError):
+                    self.process.terminate()
+            deadline = time.monotonic() + TERMINAL_SHUTDOWN_TIMEOUT_SECONDS
+            # OS session membership has no portable asynchronous notification.
+            while time.monotonic() < deadline:
+                if not session_groups(session_id) - {session_id}:
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            try:
+                await self._reap_terminal_supervisor()
+            finally:
+                groups = session_groups(session_id)
+                for group in groups:
+                    with suppress(ProcessLookupError):
+                        os.killpg(group, signal.SIGKILL)
+                if groups:
+                    await asyncio.sleep(0.3)
+        assert not session_groups(session_id), "Owned terminal session survived"
+
+    async def _reap_terminal_supervisor(self) -> None:
+        if self.process.returncode is None:
+            with suppress(ProcessLookupError):
+                self.process.terminate()
+        try:
+            await asyncio.wait_for(self.process.wait(), 5)
+        finally:
+            if self.process.returncode is None:
+                with suppress(ProcessLookupError):
+                    self.process.kill()
+                await self.process.wait()
+
+
+@asynccontextmanager
+async def running_worker(
+    role: str,
+    namespace: str,
+    *,
+    log_dir: Path,
+    replacement_delay: int = 0,
+    alive_timeout: int = 30,
+    fail_runtime: bool = False,
+    wait_ready: bool = True,
+    developer_command: bool = False,
+) -> AsyncIterator[RunningWorker]:
+    env = worker_environment(namespace, log_dir)
+    env["TASKBOT_TEST_TERMINAL_STATE"] = env["TASKBOT_TEST_CHILD_STARTS"] + "-terminal.json"
+    env["TASKBOT_TEST_REPLACEMENT_INIT_DELAY"] = str(replacement_delay)
+    env["TASKBOT_TEST_ALIVE_TIMEOUT"] = str(alive_timeout)
+    if fail_runtime:
+        env["TASKBOT_TEST_FAIL_CHILD_RUNTIME"] = "1"
+    path = log_dir / f"{role}-{uuid4().hex}.log"
+    command = (
+        ["yarn", "dev:worker"]
+        if developer_command
+        else [sys.executable, "-m", "taskbot.entrypoints.worker"]
+    )
+    app = create_celery_app(broker_url=env["CELERY_BROKER_URL"], namespace=namespace)
+    schedule = Path(beat_schedule_path(namespace))
+    try:
+        with worker_output(path, terminal=developer_command) as (output, stdin, terminal_fd):
+            if developer_command:
+                command = [sys.executable, str(BACKEND / "tests/worker_terminal.py"), *command]
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                role,
+                "--include",
+                "tests.worker_tasks",
+                cwd=BACKEND.parent if developer_command else BACKEND,
+                env=env,
+                start_new_session=True,
+                stdin=stdin,
+                stdout=output,
+                stderr=output,
+            )
+            worker = RunningWorker(
+                role,
+                namespace,
+                process,
+                app,
+                env,
+                path,
+                role + "@" + socket.gethostname(),
+                "transcription" if role == "transcribe" else "notification",
+                schedule,
+                terminal_fd,
+            )
+            try:
+                if wait_ready:
+                    await worker.ready()
+                yield worker
+            finally:
+                await worker.stop()
+    finally:
+        app.close()
+        remove_worker_files(schedule, env)
+
+
+def remove_worker_files(schedule: Path, env: dict[str, str]) -> None:
+    for suffix in ("", "-wal", "-shm"):
+        schedule.with_name(schedule.name + suffix).unlink(missing_ok=True)
+    Path(env["TASKBOT_TEST_CHILD_STARTS"]).unlink(missing_ok=True)
+    Path(env["TASKBOT_TEST_TERMINAL_STATE"]).unlink(missing_ok=True)
+
+
+@contextmanager
+def worker_output(
+    path: Path, *, terminal: bool
+) -> Iterator[tuple[BinaryIO | int, int | None, int | None]]:
+    with path.open("wb") as output:
+        if not terminal:
+            yield output, None, None
+            return
+        master, slave = pty.openpty()
+        loop = asyncio.get_running_loop()
+        os.set_blocking(master, False)
+
+        def copy_terminal() -> None:
+            try:
+                data = os.read(master, 65536)
+            except OSError:
+                loop.remove_reader(master)
+                return
+            output.write(data)
+            output.flush()
+
+        loop.add_reader(master, copy_terminal)
+        try:
+            yield slave, slave, master
+        finally:
+            loop.remove_reader(master)
+            os.close(master)
+            os.close(slave)

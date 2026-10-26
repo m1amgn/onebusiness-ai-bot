@@ -4,7 +4,7 @@ A task-management application. Users create tasks by sending text or voice messa
 
 The domain core and PostgreSQL persistence are available, with migrations and a
 command to create development tasks. The API serves health only, and the frontend
-is a placeholder with a generated API contract. Bot, worker and task dashboard
+is a placeholder with a generated API contract. The worker runtime is available. Bot handlers and task dashboard
 features are added in later stages.
 
 ## Local setup
@@ -49,7 +49,7 @@ No API key or Telegram token is needed for the foundation checks.
 | `yarn dev:whisper` | Local whisper.cpp server on `http://127.0.0.1:8178` |
 | `yarn db:migrate` | Upgrade the database schema to the latest Alembic revision |
 | `yarn --silent dev:seed <telegram_user_id> [text …]` | Create tasks and print a new dashboard token and link |
-| `yarn dev:worker transcribe` / `yarn dev:worker notify` | Worker roles; currently fail naming stage S3 |
+| `yarn dev:worker transcribe` / `yarn dev:worker notify` | Start the prefork worker roles; notify also runs beat |
 | `yarn dev:bot` | Bot; currently fails naming stage S4 |
 
 Never hand-edit `backend/openapi.json` or `frontend/src/api/generated`.
@@ -73,6 +73,36 @@ The seed stores tasks and prints the token and `<WEB_BASE_URL>/#token=…` link.
 Every run rotates the token, so older links stop working. The dashboard and task
 API arrive later; this command currently verifies persistence without Telegram.
 Events are logged as unpublished until the Redis publisher is connected.
+
+## Workers
+
+Run each role in its own terminal. Give the role as the first argument, or set
+`WORKER_ROLE` in the process environment. A role in `.env` alone is not used.
+Both roles require `DATABASE_URL`; Redis defaults to `redis://localhost:6379/0`
+and the broker uses database 1 unless `CELERY_BROKER_URL` overrides it.
+
+```sh
+yarn dev:worker transcribe
+yarn dev:worker notify
+```
+
+The launcher preserves Celery's main PID and sets the required multiprocessing
+flag on macOS. On macOS, use this command instead of starting Celery directly.
+The startup log shows the role, queue, node, broker with its password hidden,
+and Redis namespace. A missing Telegram token produces a warning; no token is
+required to start either role. Provider adapters and real job handlers arrive in S5.
+Until then, a worker warns that jobs without handlers will be discarded. Use only
+isolated test namespaces when testing this unfinished runtime on the shared broker.
+`REDIS_NAMESPACE` is for test sessions; leave it empty in normal configuration.
+
+Press Ctrl-C once for warm shutdown. A running task finishes before the worker
+stops; the prompt can return a few seconds before that task finishes. A second
+Ctrl-C requests cold shutdown. SIGTERM to the main process also finishes running
+tasks. Notify owns a beat schedule under the system temporary directory; test
+schedules use namespace-specific names. Worker tests use real Redis and test-only
+`s3test.*` tasks, without Telegram, transcription providers or database connections.
+Linux prefork, the delivered Compose stack and `restart: unless-stopped` are
+verified in S8.
 
 ## Shared infrastructure
 

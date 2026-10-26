@@ -6,12 +6,7 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialWithJitterBackoff
 
 from taskbot.infrastructure.redis.client import create_redis_client
-from taskbot.infrastructure.settings import BaseAppSettings
-from taskbot.infrastructure.settings.redis import RedisSettingsMixin
-
-
-class Settings(BaseAppSettings, RedisSettingsMixin):
-    pass
+from taskbot.infrastructure.settings.worker import BrokerSettings
 
 
 @pytest.fixture(autouse=True)
@@ -21,34 +16,34 @@ def clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_broker_default_and_empty_override(tmp_path: Path) -> None:
-    assert Settings(_env_file=None).broker_url == "redis://localhost:6379/1"
+    assert BrokerSettings(_env_file=None).broker_url == "redis://localhost:6379/1"
     dotenv = tmp_path / ".env"
     dotenv.write_text("CELERY_BROKER_URL=\n")
-    assert Settings(_env_file=dotenv).broker_url == "redis://localhost:6379/1"
+    assert BrokerSettings(_env_file=dotenv).broker_url == "redis://localhost:6379/1"
 
 
 def test_broker_derivation_preserves_credentials_and_query(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REDIS_URL", "redis://u:p@h:6380/3?socket_timeout=2")
-    settings = Settings(_env_file=None)
+    settings = BrokerSettings(_env_file=None)
     assert settings.broker_url == "redis://u:p@h:6380/1?socket_timeout=2"
     monkeypatch.setenv("CELERY_BROKER_URL", "redis://h:6380/4")
-    assert Settings(_env_file=None).broker_url == "redis://h:6380/4"
+    assert BrokerSettings(_env_file=None).broker_url == "redis://h:6380/4"
     monkeypatch.setenv("CELERY_BROKER_URL", "amqp://h/")
     with pytest.raises(ValidationError, match="celery_broker_url"):
-        Settings(_env_file=None)
+        BrokerSettings(_env_file=None)
 
 
 @pytest.mark.parametrize(
     "namespace", ["", "taskbot_test_1_ab12cd34:", "taskbot_test_1_ab12cd34:t3:"]
 )
 def test_valid_namespaces(namespace: str) -> None:
-    assert Settings(_env_file=None, redis_namespace=namespace).redis_namespace == namespace
+    assert BrokerSettings(_env_file=None, redis_namespace=namespace).redis_namespace == namespace
 
 
 @pytest.mark.parametrize("namespace", ["x", "X:", "a:b:c:", "a" * 65 + ":", "a:b-:"])
 def test_invalid_namespaces(namespace: str) -> None:
     with pytest.raises(ValidationError, match="redis_namespace"):
-        Settings(_env_file=None, redis_namespace=namespace)
+        BrokerSettings(_env_file=None, redis_namespace=namespace)
 
 
 def test_env_file_override_is_read_at_construction(
@@ -58,8 +53,8 @@ def test_env_file_override_is_read_at_construction(
         dotenv = tmp_path / f"{index}.env"
         dotenv.write_text(f"REDIS_NAMESPACE=file{index}:\n")
         monkeypatch.setenv("TASKBOT_ENV_FILE", str(dotenv))
-        assert Settings().redis_namespace == f"file{index}:"
-        assert Settings(_env_file=None).redis_namespace == ""
+        assert BrokerSettings().redis_namespace == f"file{index}:"
+        assert BrokerSettings(_env_file=None).redis_namespace == ""
 
 
 def test_client_options_are_canonical_and_lazy() -> None:

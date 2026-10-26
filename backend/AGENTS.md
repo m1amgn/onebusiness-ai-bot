@@ -145,3 +145,38 @@ Call the queue's synchronous close() before child shutdown closes loop-owned cli
 it waits for running sends and cancels executor work that has not started. Cancellation
 of an enqueue awaiter does not stop an already-running broker operation. Broker socket
 timeouts and bounded retries limit those operations; queued sends add executor batches.
+
+## Worker runtime
+
+Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
+launcher. It execs Celery; notify also owns beat. Role selection reads the first
+argument or process WORKER_ROLE, never dotenv. BrokerSettings is connection-free;
+WorkerSettings requires role and DATABASE_URL, with no provider settings and an
+optional Telegram token. Startup validation prints variable names without input
+values. On macOS the launcher adds FORKED_BY_MULTIPROCESSING=1; direct prefork
+without it is refused.
+
+The main process records its actual PID and connects no clients. Each pool child
+owns one event loop and WorkerContainer. Register each resource in that owner as
+soon as it is built; a builder failure must leave partial resources reachable for
+cleanup. start_child catches BaseException, closes resources independently,
+signals only its still-recorded actual parent, then always os._exit(70). Tasks use
+runtime.run_async; interrupted coroutines are cancelled and drained before reuse.
+Shutdown closes the job queue synchronously before Redis and the SQL engine.
+
+Use tests/workers.py for real-worker tests. Every worker needs its own test child
+namespace, /dev/null dotenv, no Telegram token and a closed-port fake database URL.
+Test-only hooks/tasks stay in tests/worker_tasks.py, included explicitly. Worker
+output goes to owned files. Teardown sends SIGTERM only to the main PID, allows
+warm shutdown, kills the whole group on timeout and proves no group survives.
+Remove owned beat base/WAL/SHM files. Never run an unfinished worker against the
+unnamespaced shared development queues; without S5 handlers it discards real jobs.
+S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification.
+
+Celery 5.6 embedded Beat protects sys.__stdin__ when closing inherited descriptors,
+but Billiard first replaces sys.stdin. The worker-only compat fixup registers a
+public after-fork callback that aligns those wrappers in Beat before descriptor
+closure. Celery serializes the fixup for spawned apps. Pool children and producer
+apps do not change their streams. Keep completed notify TERM/Ctrl-C logs free of
+bad-descriptor finalization errors; remove this compatibility fix when the pinned
+SDKs preserve the live wrapper themselves.
