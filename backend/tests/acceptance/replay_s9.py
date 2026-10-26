@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 ADAPTER_LOGGER = "taskbot.infrastructure.extraction.claude"
 ROWS_PATH = Path(__file__).with_name("s9_rows.json")
-ROWS_SHA256 = "481b4cade068a92d9caf996cb30381a03595ddc430e4c19ba8c492be72a70595"
+ROWS_SHA256 = "7e427b19a15af4b11fa5cc4933cc75fa89d548932d6f62096255361da15a6ece"
 DEADLINE_SECONDS = 8
 USAGE = TypeAdapter(dict[str, NonNegativeInt])
 

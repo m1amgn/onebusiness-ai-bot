@@ -49,7 +49,7 @@ def test_replay_loads_the_frozen_owner_rows() -> None:
     rows = replay_s9.load_rows()
     assert [row.id for row in rows] == [f"A{index}" for index in range(1, 9)]
     assert len(rows[-1].text) == 2276
-    assert len(rows[-1].must_keep) == 14
+    assert len(rows[-1].must_keep) == 16
 
 
 def test_fact_check_ignores_case_and_whitespace_but_reports_a_missing_fact() -> None:
