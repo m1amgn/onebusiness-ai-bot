@@ -173,6 +173,10 @@ rule. It starts no worker and connects to no store; live seed tests prove public
 TASKBOT_ENV_FILE overrides the root dotenv file at settings construction; explicit
 _env_file=None still disables dotenv loading for in-process tests.
 
+Derived broker URLs use Redis database 1 and keep only ssl_* query options,
+preserving TLS certificate policy; redis-py client options and fragments are dropped.
+An explicit CELERY_BROKER_URL is used unchanged.
+
 ## Celery producer
 
 create_celery_app builds connection-free shared configuration and routes from the
@@ -195,6 +199,13 @@ optional Telegram token. Startup validation prints variable names without input
 values. On macOS the launcher adds FORKED_BY_MULTIPROCESSING=1; direct prefork
 without it is refused.
 
+Notify stores its beat schedule in taskbot-<uid> under the system temporary
+directory. Before exec, the launcher creates it with mode 0700 or checks that
+it is an owned directory with no group or other access; symlinks are refused.
+Beat unpickles this schedule, so only the worker's OS user may write it.
+The application keeps the directory across restarts. Transcribe creates none.
+Startup logs mask broker passwords and omit the URL query and fragment.
+
 The main process records its actual PID and connects no clients. Each pool child
 owns one event loop and WorkerContainer. Register each resource in that owner as
 soon as it is built; a builder failure must leave partial resources reachable for
@@ -209,7 +220,8 @@ Test-only hooks/tasks stay in tests/worker_tasks.py, included explicitly. Worker
 output goes to owned files. Teardown sends SIGTERM only to the main PID, allows
 warm shutdown, records leftover members before cleanup, and rejects any forced stop.
 It kills residual owned groups in a finalizer. Beat runs in a private temporary directory;
-verify its namespaced schedule while it runs and remove owned base/WAL/SHM files.
+verify its namespaced schedule in the nested per-user directory while it runs,
+then remove the harness's entire private temporary root after all children exit.
 Never run an unfinished worker against the
 unnamespaced shared development queues; without S5 handlers it discards real jobs.
 S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification.

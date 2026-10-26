@@ -1,4 +1,5 @@
 import os
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -20,7 +21,8 @@ DATABASE_URL = "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:1/taskbot_test_0_
 
 
 @pytest.fixture(autouse=True)
-def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setenv("TASKBOT_ENV_FILE", "/dev/null")
     for name in (
         "WORKER_ROLE",
@@ -79,9 +81,11 @@ def test_environment_and_beat_files_are_scoped() -> None:
     assert worker_environment(original, "linux") == original
     assert original == {"WORKER_ROLE": "notify"}
     assert beat_schedule_path("test:t1:") == str(
-        Path(tempfile.gettempdir()) / "celerybeat-schedule-test_t1_"
+        Path(tempfile.gettempdir()) / f"taskbot-{os.getuid()}" / "celerybeat-schedule-test_t1_"
     )
-    assert beat_schedule_path("") == str(Path(tempfile.gettempdir()) / "celerybeat-schedule")
+    assert beat_schedule_path("") == str(
+        Path(tempfile.gettempdir()) / f"taskbot-{os.getuid()}" / "celerybeat-schedule"
+    )
 
 
 @pytest.mark.parametrize("arguments", [[], ["bogus"]])
@@ -131,8 +135,104 @@ def test_notify_launcher_uses_the_child_namespace_in_its_schedule_argument(
     launch(["notify"])
     arguments = calls[0]
     assert arguments[arguments.index("-s") + 1] == str(
-        Path(tempfile.gettempdir()) / "celerybeat-schedule-taskbot_test_0_01234567_t8_"
+        Path(tempfile.gettempdir())
+        / f"taskbot-{os.getuid()}"
+        / "celerybeat-schedule-taskbot_test_0_01234567_t8_"
     )
+
+
+def test_notify_creates_private_schedule_directory_and_keeps_it_on_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / f"taskbot-{os.getuid()}"
+    calls: list[list[str]] = []
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(os, "execve", lambda executable, argv, env: calls.append(argv))
+
+    launch(["notify"])
+
+    metadata = directory.lstat()
+    assert stat.S_ISDIR(metadata.st_mode)
+    assert metadata.st_uid == os.getuid()
+    assert stat.S_IMODE(metadata.st_mode) == 0o700
+    assert calls[0][calls[0].index("-s") + 1] == str(directory / "celerybeat-schedule")
+    schedule = directory / "celerybeat-schedule"
+    schedule.write_bytes(b"existing schedule")
+    launch(["notify"])
+    assert len(calls) == 2
+    assert schedule.read_bytes() == b"existing schedule"
+
+
+@pytest.mark.parametrize(
+    "untrusted", ["symlink", "dangling-symlink", "file", "public", "group", "wrong-owner"]
+)
+def test_notify_refuses_untrusted_schedule_directory_before_exec(
+    untrusted: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    uid = os.getuid()
+    if untrusted == "wrong-owner":
+        monkeypatch.setattr(os, "getuid", lambda: uid + 1)
+    directory = tmp_path / f"taskbot-{os.getuid()}"
+    target = tmp_path / "target"
+    if untrusted in ("symlink", "dangling-symlink"):
+        if untrusted == "symlink":
+            target.mkdir(mode=0o700)
+        directory.symlink_to(target, target_is_directory=True)
+    elif untrusted == "file":
+        directory.write_bytes(b"untrusted")
+    else:
+        directory.mkdir(mode=0o700)
+        if untrusted in ("public", "group"):
+            directory.chmod(0o755 if untrusted == "public" else 0o710)
+    calls: list[list[str]] = []
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(os, "execve", lambda executable, argv, env: calls.append(argv))
+
+    with pytest.raises(SystemExit) as caught:
+        launch(["notify"])
+
+    assert caught.value.code == 2
+    assert not calls
+    assert capsys.readouterr().err == (
+        f"Invalid configuration: beat schedule directory {directory} must be a directory "
+        "owned by this user with no group or other access\n"
+    )
+    assert directory.is_symlink() if "symlink" in untrusted else directory.exists()
+
+
+def test_transcribe_does_not_create_beat_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(os, "execve", lambda executable, argv, env: calls.append(argv))
+    launch(["transcribe"])
+    assert len(calls) == 1
+    assert "-s" not in calls[0]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("operation", ["mkdir", "lstat"])
+def test_notify_reports_directory_access_failures_before_exec(
+    operation: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def deny(*args: object, **kwargs: object) -> None:
+        raise PermissionError("synthetic filesystem refusal")
+
+    calls: list[list[str]] = []
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(os, "execve", lambda executable, argv, env: calls.append(argv))
+    monkeypatch.setattr(os, operation, deny)
+    with pytest.raises(SystemExit) as caught:
+        launch(["notify"])
+    assert caught.value.code == 2
+    assert not calls
+    assert "Invalid configuration: beat schedule directory" in capsys.readouterr().err
 
 
 def test_validation_errors_do_not_echo_secret_inputs(

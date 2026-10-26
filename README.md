@@ -151,8 +151,14 @@ whose code should handle the jobs. Workers of one role also share a node name.
 Press Ctrl-C once for warm shutdown. A running task finishes before the worker
 stops; the prompt can return a few seconds before that task finishes. A second
 Ctrl-C requests cold shutdown. SIGTERM to the main process also finishes running
-tasks. Notify owns a beat schedule under the system temporary directory; test
-schedules use namespace-specific names. Worker tests use real Redis and test-only
+tasks. Notify keeps its beat schedule in a private `taskbot-<uid>` directory under
+the system temporary directory. The launcher creates it with mode `0700` or
+refuses an existing directory owned by another user, a symbolic link, or group
+or other access. The schedule survives restarts; test schedules use namespaced
+names in an owned temporary root that the harness removes. Startup logs mask
+broker passwords and omit URL queries and fragments. A broker URL derived from
+`REDIS_URL` retains TLS options (`ssl_*`) and drops other client options; an
+explicit `CELERY_BROKER_URL` is kept unchanged. Worker tests use real Redis and test-only
 `s3test.*` tasks, without Telegram, transcription providers or database connections.
 Linux prefork, the delivered Compose stack and `restart: unless-stopped` are
 verified in S8.

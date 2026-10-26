@@ -53,6 +53,7 @@ async def test_worker_session_cleans_both_databases_and_beat_files(tmp_path: Pat
             )
             await wait_records(tmp_path / "tasks.jsonl", "end")
         assert not list(worker.schedule_path.parent.glob(worker.schedule_path.name + "*"))
+        assert not await asyncio.to_thread(Path(worker.env["TMPDIR"]).exists)
     for url in (session.redis_url, session.broker_url):
         async with create_redis_client(url) as client:
             assert [key async for key in client.scan_iter(match=session.id + ":*")] == []

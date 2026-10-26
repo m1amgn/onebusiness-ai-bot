@@ -131,7 +131,8 @@ class RunningWorker:
 
     async def assert_owned_beat_schedule(self) -> None:
         assert self.role == "notify"
-        assert self.schedule_path.parent == Path(self.env["TMPDIR"])
+        root = Path(self.env["TMPDIR"])
+        assert self.schedule_path.parent == root / f"taskbot-{os.getuid()}"
         assert self.schedule_path.name.endswith(self.namespace.replace(":", "_"))
         async with asyncio.timeout(30):
             # Schedule-file creation has no portable asynchronous notification.
@@ -139,9 +140,11 @@ class RunningWorker:
                 await asyncio.sleep(0.05)
         # This private directory was empty at launch. A namespace regression cannot
         # read, create or delete the shared development worker's schedule file.
+        schedules = await asyncio.to_thread(lambda: list(root.rglob("celerybeat-schedule*")))
         assert all(
-            path.name.startswith(self.schedule_path.name)
-            for path in self.schedule_path.parent.glob("celerybeat-schedule*")
+            path.parent == self.schedule_path.parent
+            and path.name.startswith(self.schedule_path.name)
+            for path in schedules
         )
 
     @property
@@ -354,19 +357,17 @@ def private_schedule(namespace: str, log_dir: Path, env: dict[str, str]) -> Path
     directory = log_dir / ("beat-" + uuid4().hex)
     directory.mkdir()
     env["TMPDIR"] = str(directory)
-    return directory / Path(beat_schedule_path(namespace)).name
+    return directory / f"taskbot-{os.getuid()}" / Path(beat_schedule_path(namespace)).name
 
 
 def remove_worker_files(schedule: Path, env: dict[str, str]) -> None:
-    for base in (schedule, schedule.parent / "celerybeat-schedule"):
-        for suffix in ("", "-wal", "-shm"):
-            base.with_name(base.name + suffix).unlink(missing_ok=True)
     Path(env["TASKBOT_TEST_CHILD_STARTS"]).unlink(missing_ok=True)
     Path(env["TASKBOT_TEST_TERMINAL_STATE"]).unlink(missing_ok=True)
     # Yarn and uv create launcher shims/locks under TMPDIR too. The harness created
     # this private directory, and every child that used it has already exited.
-    assert schedule.parent == Path(env["TMPDIR"])
-    shutil.rmtree(schedule.parent)
+    root = Path(env["TMPDIR"])
+    assert schedule.parent == root / f"taskbot-{os.getuid()}"
+    shutil.rmtree(root)
 
 
 @contextmanager

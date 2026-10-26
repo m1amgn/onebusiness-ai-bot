@@ -55,13 +55,31 @@ def test_direct_prefork_is_refused_on_macos(
 
 
 def test_ready_logs_role_queue_node_namespace_without_broker_password(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv(
+        "CELERY_BROKER_URL",
+        "redis://user:synthetic-password@127.0.0.1:1/1?password=synthetic-query#synthetic-fragment",
+    )
     with caplog.at_level(logging.INFO):
         worker_signals.worker_ready(sender=SimpleNamespace(hostname="notify@test", app=app))
     text = caplog.text
     for value in ("notify", "notification", "notify@test", "test:t1:", "redis://user:"):
         assert value in text
     assert "synthetic-password" not in text
+    assert "synthetic-query" not in text
+    assert "synthetic-fragment" not in text
     assert text.count("TELEGRAM_BOT_TOKEN is not set") == 1
     assert "No job handler is registered for queue notification" in text
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("redis://u:p@h:6379/1?password=s&x=y#f", "redis://u:***@h:6379/1"),
+        ("redis://h:6379/1?password=s", "redis://h:6379/1"),
+        ("rediss://u:p%40ss@[::1]:6380/1?ssl_keyfile=secret#f", "rediss://u:***@[::1]:6380/1"),
+    ],
+)
+def test_broker_display_omits_password_query_and_fragment(url: str, expected: str) -> None:
+    assert worker_signals._broker_display(url) == expected
