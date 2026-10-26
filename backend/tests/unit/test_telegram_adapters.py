@@ -22,7 +22,6 @@ from tests.fakes.telegram_session import FakeTelegramSession
 
 
 async def test_notifier_sends_plain_reply_and_returns_message_id() -> None:
-
     session = FakeTelegramSession()
     async with Bot("123456:synthetic", session=session) as bot:
         assert await AiogramUserNotifier(bot).send_reply(7, "A <title>", reply_to_message_id=3) == 1
@@ -48,7 +47,6 @@ async def test_notifier_sends_plain_reply_and_returns_message_id() -> None:
 async def test_notifier_maps_telegram_errors_without_response_body(
     status: int, description: str, expected: type[Exception]
 ) -> None:
-
     session = FakeTelegramSession()
     session.responses.append(
         (
@@ -67,12 +65,12 @@ async def test_notifier_maps_telegram_errors_without_response_body(
         with pytest.raises(expected) as caught:
             await AiogramUserNotifier(bot).edit_message(7, 1, "title")
     assert description not in "".join(traceback.format_exception(caught.value))
+    assert caught.value.__context__ is None
     if isinstance(caught.value, RetryAfterError):
         assert caught.value.seconds == 12
 
 
 async def test_not_modified_is_success() -> None:
-
     session = FakeTelegramSession(
         responses=deque(
             [
@@ -86,13 +84,13 @@ async def test_not_modified_is_success() -> None:
     )
     async with Bot("123456:synthetic", session=session) as bot:
         await AiogramUserNotifier(bot).edit_message(7, 1, "same title")
+    assert "parse_mode" not in session.payloads[0]
 
 
 @pytest.mark.parametrize(
     "error", [TimeoutError(), ClientConnectionError("synthetic network failure")]
 )
 async def test_notifier_maps_transport_failures(error: Exception) -> None:
-
     session = FakeTelegramSession()
     session.request_errors["sendMessage"] = error
     async with Bot("123456:synthetic", session=session) as bot:
@@ -102,7 +100,6 @@ async def test_notifier_maps_transport_failures(error: Exception) -> None:
 
 @pytest.mark.parametrize("method", ["sendMessage", "editMessageText", "getFile", "download"])
 async def test_raw_decode_errors_stay_inside_the_telegram_ports(method: str) -> None:
-
     session = FakeTelegramSession()
     error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "private response")
     if method == "download":
@@ -128,7 +125,6 @@ async def test_raw_decode_errors_stay_inside_the_telegram_ports(method: str) -> 
 
 @pytest.mark.parametrize("method", ["sendMessage", "editMessageText", "getFile"])
 async def test_telegram_ports_propagate_cancellation(method: str) -> None:
-
     session = FakeTelegramSession()
     session.request_gates[method] = asyncio.Event()
     async with Bot("123456:synthetic", session=session) as bot:
@@ -146,7 +142,6 @@ async def test_telegram_ports_propagate_cancellation(method: str) -> None:
 
 
 async def test_telegram_file_too_big_becomes_size_refusal() -> None:
-
     session = FakeTelegramSession(
         responses=deque(
             [
@@ -170,22 +165,23 @@ async def test_telegram_file_too_big_becomes_size_refusal() -> None:
 
 @pytest.mark.parametrize(
     ("status", "body"),
-    [(502, "<html>private response</html>"), (200, '{"ok":true,"result":{"private":"body"}}')],
+    [
+        (502, "<html>synthetic-body-marker</html>"),
+        (200, '{"ok":true,"result":{"synthetic-body-marker":"body"}}'),
+    ],
 )
 async def test_malformed_notifier_response_stays_inside_the_port(status: int, body: str) -> None:
-
     session = FakeTelegramSession(responses=deque([(status, body)]))
     async with Bot("123456:synthetic", session=session) as bot:
         with pytest.raises(NotificationError) as caught:
             await AiogramUserNotifier(bot).send_reply(7, "title")
-    assert "private" not in "".join(traceback.format_exception(caught.value))
+    assert "synthetic-body-marker" not in "".join(traceback.format_exception(caught.value))
 
 
 @pytest.mark.parametrize("declared", [None, 4])
 async def test_voice_download_caps_actual_bytes_with_optional_declared_size(
     declared: int | None,
 ) -> None:
-
     session = FakeTelegramSession()
     session.responses.append(
         (
@@ -210,7 +206,6 @@ async def test_voice_download_caps_actual_bytes_with_optional_declared_size(
 
 @pytest.mark.parametrize("declared", [None, 5])
 async def test_voice_download_refuses_declared_or_actual_oversize(declared: int | None) -> None:
-
     session = FakeTelegramSession()
     session.responses.append(
         (
@@ -238,7 +233,6 @@ async def test_voice_download_refuses_declared_or_actual_oversize(declared: int 
 async def test_download_hides_token_bearing_transport_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-
     session = FakeTelegramSession()
     session.stream_error = ClientConnectionError(
         "https://api.telegram.org/file/bot123456:synthetic/voice.ogg"
@@ -251,7 +245,6 @@ async def test_download_hides_token_bearing_transport_error(
 
 
 async def test_stalled_download_has_one_total_deadline() -> None:
-
     session = FakeTelegramSession()
     session.stream_gate = asyncio.Event()
     async with Bot("123456:synthetic", session=session) as bot:
@@ -264,7 +257,6 @@ async def test_stalled_download_has_one_total_deadline() -> None:
 async def test_download_missing_file_path_or_server_error_is_unavailable(
     result: dict[str, str] | None,
 ) -> None:
-
     session = FakeTelegramSession()
     session.responses.append(
         (200, json.dumps({"ok": True, "result": result}))

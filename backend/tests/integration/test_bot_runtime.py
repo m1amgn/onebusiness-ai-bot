@@ -102,17 +102,19 @@ async def test_loss_during_startup_never_sends_getupdates(bot_harness: BotHarnes
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_poll_failure_and_unexpected_keeper_end_stop_the_bot(
+async def test_poll_failure_streak_outlasts_the_sdk_backoff_and_stops_the_bot(
     bot_harness: BotHarness, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     owned = bot_harness
-    monkeypatch.setattr(bot_cli, "PollingWatch", lambda: PollingWatch(failure_seconds=0.06))
+    # aiogram retries with a 1-5 s backoff. A reset on each error must not pass.
+    monkeypatch.setattr(bot_cli, "PollingWatch", lambda: PollingWatch(failure_seconds=8))
     owned.session.request_errors["getUpdates"] = TelegramConflictError(
         method=GetUpdates(), message="synthetic conflict"
     )
-    async with asyncio.timeout(10):
+    async with asyncio.timeout(20):
         assert await bot_cli.run(owned.settings) == 1
     assert owned.session.closed
+    assert owned.session.methods.count("getUpdates") >= 3
     assert (
         capsys.readouterr().err.strip()
         == "Telegram polling has failed for 60 s (TelegramConflictError)."
@@ -213,7 +215,8 @@ async def test_root_drains_inflight_handlers_before_closing_session(
     owned.session.updates = [
         message_update(1, "Buy milk").model_dump(mode="json", exclude_none=True)
     ]
-    monkeypatch.setattr(bot_cli, "DRAIN_SECONDS", 0.15 if stop == "deadline" else 2)
+    drain_seconds = 0.15 if stop == "deadline" else 30
+    monkeypatch.setattr(bot_cli, "DRAIN_SECONDS", drain_seconds)
     if stop in {"os_signal", "os_second_signal"}:
         monkeypatch.setattr(bot_cli, "_install_signals", REAL_INSTALL_SIGNALS)
     task = asyncio.create_task(bot_cli.run(owned.settings))
@@ -315,6 +318,33 @@ async def test_external_cancel_after_stop_request_still_propagates(
         owned.extractor.gate.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_external_cancel_during_polling_stops_sdk_tasks(bot_harness: BotHarness) -> None:
+    owned = bot_harness
+    existing = asyncio.all_tasks()
+    task = asyncio.create_task(bot_cli.run(owned.settings))
+    sdk_tasks: set[asyncio.Task[object]] = set()
+    try:
+        async with asyncio.timeout(10):
+            await owned.session.polled.wait()
+            sdk_tasks = {
+                pending
+                for pending in asyncio.all_tasks() - existing - {task}
+                if getattr(pending.get_coro(), "__qualname__", "")
+                in {"Dispatcher._polling", "Event.wait"}
+            }
+            assert len(sdk_tasks) == 3  # Poller, SDK stop waiter, owned startup-stop waiter.
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert owned.session.closed
+        assert all(pending.done() for pending in sdk_tasks)
+    finally:
+        task.cancel()
+        for pending in sdk_tasks:
+            pending.cancel()
+        await asyncio.gather(task, *sdk_tasks, return_exceptions=True)
 
 
 async def test_first_signal_after_internal_failure_still_drains(bot_harness: BotHarness) -> None:
@@ -427,3 +457,42 @@ async def test_signal_during_ambiguous_acquire_still_releases_the_key(
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_unexpected_startup_failure_has_a_safe_nonzero_exit(
+    bot_harness: BotHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail(**kwargs: object) -> None:
+        raise RuntimeError("https://api.telegram.org/bot123456:synthetic/getMe")
+
+    monkeypatch.setattr(bot_cli, "create_celery_app", fail)
+    assert await bot_cli.run(bot_harness.settings) == 1
+    error = capsys.readouterr().err
+    assert error == "Bot stopped (RuntimeError).\n"
+    assert "123456:synthetic" not in error
+    assert "Traceback" not in error
+    assert "getUpdates" not in bot_harness.session.methods
+
+
+async def test_keeper_loss_during_timed_out_startup_renewal_prevents_polling(
+    bot_harness: BotHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keeper: LockKeeper | None = None
+
+    async def hold(self: LockKeeper) -> None:
+        nonlocal keeper
+        keeper = self
+        await asyncio.Event().wait()
+
+    async def renew(self: PollingLock) -> None:
+        assert keeper is not None
+        keeper.lost = True
+        raise TimeoutError("synthetic renewal timeout")
+
+    monkeypatch.setattr(LockKeeper, "run", hold)
+    monkeypatch.setattr(PollingLock, "renew", renew)
+    async with asyncio.timeout(10):
+        assert await bot_cli.run(bot_harness.settings) == 1
+    assert "getUpdates" not in bot_harness.session.methods

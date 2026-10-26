@@ -4,10 +4,8 @@ from typing import assert_never
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
-from aiogram.exceptions import AiogramError
 from aiogram.filters import Command
 from aiogram.types import ErrorEvent, Message
-from aiohttp import ClientError
 
 from taskbot.application import replies
 from taskbot.application.accept_voice import AcceptVoiceCommand, VoiceRefused
@@ -76,7 +74,7 @@ async def handle_unknown(message: Message, ports: BotPorts) -> None:
 
 
 async def handle_text(message: Message, ports: BotPorts, bot: Bot) -> None:
-    with suppress(AiogramError, TimeoutError, ClientError):
+    with suppress(Exception):
         await bot.send_chat_action(message.chat.id, "typing", request_timeout=2)
     try:
         created = await ports.create_tasks.execute(

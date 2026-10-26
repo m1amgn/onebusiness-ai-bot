@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from datetime import timedelta
 
@@ -120,6 +121,38 @@ async def test_unexpected_adapter_error_after_acceptance_is_contained(
     assert result.acknowledged == (operation != "ack")
     assert result.enqueued == (operation != "enqueue")
     assert len(queue.jobs) == (operation != "enqueue")
+
+
+@pytest.mark.parametrize("operation", ["ack", "enqueue"])
+async def test_cancellation_after_acceptance_propagates(
+    operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, clock, queue = voice_fixture()
+    notifier = FakeUserNotifier()
+    entered = asyncio.Event()
+
+    async def gated(*args: object, **kwargs: object) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    if operation == "ack":
+        monkeypatch.setattr(notifier, "send_reply", gated)
+    else:
+        monkeypatch.setattr(queue, "enqueue", gated)
+    task = asyncio.create_task(
+        voice_use_case(store, clock, queue, notifier).execute(voice_command(1, None))
+    )
+    try:
+        async with asyncio.timeout(2):
+            await entered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert len(store.state.voice_jobs) == 1
+        assert not queue.jobs
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize(

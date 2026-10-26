@@ -104,9 +104,12 @@ the degraded heuristic and adds a fallback notice to text replies.
 The bot renews its polling lock during startup and while draining. It publishes
 `heartbeat:bot` only after successful polling, under `REDIS_NAMESPACE` when set.
 Loss of ownership or sustained failed polling requests stops the process. Time
-spent waiting for handler capacity counts as healthy polling. Allow at least
-30 seconds for shutdown in the delivered stack; verify the producer drain under
-the deployment's broker conditions.
+spent waiting for handler capacity counts as healthy polling. If all ten handlers
+wait indefinitely, for example on database locks, the bot keeps its heartbeat
+but consumes no further updates. This version has no timeout for a complete update;
+its heartbeat does not detect permanently stuck handlers. Allow at least 30 seconds
+for shutdown in the delivered stack; verify the producer drain under the deployment's
+broker conditions.
 
 Telegram: not verified live. Offline handler, adapter and lifecycle checks use a
 fake Telegram transport; integration checks use real isolated PostgreSQL and Redis.

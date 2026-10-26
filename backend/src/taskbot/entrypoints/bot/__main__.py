@@ -58,7 +58,6 @@ class StopController:
         self.phase = Phase.STARTUP
         self.startup_stopped = asyncio.Event()
         self.signals_received = 0
-        self.stopped = False
         self.skip_drain = asyncio.Event()
         self.exit_code = 0
         self._stop_tasks: set[asyncio.Task[None]] = set()
@@ -76,7 +75,6 @@ class StopController:
         self.request_stop()
 
     def request_stop(self) -> None:
-        self.stopped = True
         if self.phase == Phase.STARTUP:
             self.startup_stopped.set()
         elif self.phase == Phase.POLLING:
@@ -197,8 +195,6 @@ async def _run_dispatcher(
             raise BotStartupError("The polling lock was lost.")
         watch.start()
         control.phase = Phase.POLLING
-        if control.stopped:
-            control.request_stop()
 
     dispatcher.startup.register(before_polling)
     heartbeat = asyncio.create_task(
@@ -266,6 +262,11 @@ async def _serve_until_stopped(
         await asyncio.wait({serving, stopped}, return_when=asyncio.FIRST_COMPLETED)
         if serving.done():
             await serving
+    except asyncio.CancelledError:
+        # aiogram leaves its polling tasks alive if start_polling itself is cancelled.
+        if control.phase == Phase.POLLING:
+            await control._stop_polling()
+        raise
     finally:
         if not serving.done():
             serving.cancel()

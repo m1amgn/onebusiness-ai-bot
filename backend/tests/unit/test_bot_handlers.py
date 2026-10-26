@@ -36,6 +36,8 @@ async def test_private_text_preserves_source_and_publishes_after_reply() -> None
     [
         ("/dashboard", True, replies.NOT_PRIVATE),
         ("/start", True, replies.NOT_PRIVATE),
+        ("/start@synthetic_bot", True, replies.NOT_PRIVATE),
+        ("/dashboard@Synthetic_Bot", True, replies.NOT_PRIVATE),
         ("/start@other_bot", True, None),
         ("Buy milk", True, None),
         ("🙂👍", False, replies.EMPTY_TEXT),
@@ -135,6 +137,37 @@ async def test_one_word_reaches_extractor_after_a_stalled_typing_action() -> Non
     assert h.notifier.replies[0].text == "Task created: Extracted"
     assert h.store.calls.items.count("extract") == 1
     assert session.timeouts[0] == 2
+
+
+async def test_typing_decode_failure_still_creates_the_task() -> None:
+    h = HandlerHarness()
+    session = FakeTelegramSession()
+    session.request_errors["sendChatAction"] = UnicodeDecodeError(
+        "utf-8", b"\xff", 0, 1, "synthetic response"
+    )
+    async with h.bot(session) as bot:
+        await h.dispatcher().feed_update(bot, message_update(1, "Buy milk"))
+    assert len(h.store.state.tasks) == len(h.publisher.events) == 1
+    assert [item.text for item in h.notifier.replies] == ["Task created: Buy milk"]
+
+
+async def test_cancelling_the_typing_action_still_propagates() -> None:
+    h = HandlerHarness()
+    session = FakeTelegramSession()
+    session.request_gates["sendChatAction"] = asyncio.Event()
+    async with h.bot(session) as bot:
+        task = asyncio.create_task(h.dispatcher().feed_update(bot, message_update(1, "Buy milk")))
+        try:
+            async with asyncio.timeout(2):
+                await session.started.wait()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert not h.store.state.tasks
+            assert not h.notifier.replies
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("kind", ["missing_sender", "bot_sender", "service", "group_voice"])

@@ -345,14 +345,30 @@
   {
     "row": "B19",
     "replies": [
-      "Send me a text or a voice message and I will turn it into a task.\n/dashboard – a private link to your task board.\nTranscription: openai (no API key, voice messages are unavailable). Task extraction: heuristic (no Anthropic API key).",
-      "Task created: Buy eggs\nThe language model was unavailable, so the title is taken from your text.",
-      "Transcribing your voice message…"
+      "Send me a text or a voice message and I will turn it into a task.\n/dashboard – a private link to your task board.\nTranscription: openai (no API key, voice messages are unavailable). Task extraction: heuristic (no Anthropic API key)."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      19
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B19b",
+    "replies": [
+      "Task created: Buy eggs\nThe language model was unavailable, so the title is taken from your text."
     ],
     "messages": 1,
     "tasks": 1,
-    "voice_jobs": 1,
-    "jobs": 1,
+    "voice_jobs": 0,
+    "jobs": 0,
     "events": [
       "task.created"
     ],
@@ -364,8 +380,24 @@
     ],
     "token_rotated": false,
     "reply_to": [
-      19,
-      20,
+      20
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B19c",
+    "replies": [
+      "Transcribing your voice message…"
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 1,
+    "jobs": 1,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
       21
     ],
     "accepted_voice": [

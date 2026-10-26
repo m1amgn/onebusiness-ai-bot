@@ -34,11 +34,14 @@ class BotSession(FakeTelegramSession):
         self.updates: list[dict[str, object]] = []
         self.stop_after_sends = 0
         self.stop_on_poll = False
+        self.polled = asyncio.Event()
         self.control: bot_cli.StopController | None = None
         self._closed = closed
         self._sent = 0
 
     def _default(self, name: str) -> tuple[int, str]:
+        if name == "getUpdates":
+            self.polled.set()
         if name == "getUpdates" and self.updates:
             updates, self.updates = self.updates, []
             return 200, json.dumps({"ok": True, "result": updates})

@@ -253,7 +253,8 @@ old owner from writing or deleting a successor's heartbeat. Shutdown stops both
 tasks before shared-timeout heartbeat cleanup and token-checked lock release.
 
 Telegram adapters live in infrastructure/telegram. The notifier maps all aiogram
-and other ordinary failures to safe domain errors without exception contexts.
+and other ordinary failures to safe domain errors. Each adapter attaches no
+exception context of its own; a caller's active exception may remain as context.
 Cancellation always propagates; replies explicitly disable inherited parse modes.
 Only an edit's not-modified response is success; a gone edit target maps to
 MessageGoneError. The voice source caps declared and streamed bytes under one
@@ -280,19 +281,21 @@ keeper and heartbeat through startup and polling. BotStartupError is the single
 startup failure path; phases are an Enum. Only the owned startup task is cancelled
 by a startup stop, so an external cancellation always propagates. PollingWatch
 measures failed or overdue getUpdates requests; semaphore back-pressure stays healthy.
+External cancellation stops aiogram polling before cancelling the owned task.
 TokenRedactionFilter belongs on every root logging handler.
 
 The offline replay is tests/acceptance/replay_s4.py with TASKBOT_ENV_FILE=/dev/null.
-Its frozen B1-B19 expectations are s4_expected.json. tests/bot.py owns the shared
+Its frozen B1-B19 expectations are s4_expected.json; B19b and B19c separately check
+text and voice with B19's keyless settings. tests/bot.py owns the shared
 synthetic settings, update builder and handler/voice fixtures.
 Use task_created_text for degraded success replies and worker notification edits.
 Cold bot CLI/collection/replay subprocess checks allow 120 seconds for SDK imports.
 The held-lock subprocess fixture renews its lease during that startup window.
 tests/bot_runtime.py provides root spies over real PostgreSQL, Redis and the
-producer, with a fake Telegram
-transport and extractor. Root integration tests use per-session databases and
-namespaces, never development rows. A live check uses separate test credentials
-typed into this worktree's untracked dotenv file and is recorded in the README.
+producer, with a fake Telegram transport and extractor. Root integration tests
+use per-session databases and namespaces, never development rows. A live check
+uses separate test credentials typed into this worktree's untracked dotenv file;
+record the result in the README.
 
 ## Worker runtime
 

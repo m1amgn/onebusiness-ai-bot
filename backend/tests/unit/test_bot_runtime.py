@@ -14,6 +14,7 @@ from aiohttp import ClientConnectionError
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
+from taskbot.entrypoints.bot import runtime
 from taskbot.entrypoints.bot.runtime import InFlightUpdates, PollingWatch, TokenRedactionFilter
 from taskbot.infrastructure.redis import bot_lock
 from taskbot.infrastructure.redis.bot_lock import (
@@ -189,6 +190,7 @@ async def test_poll_health_counts_failed_attempts_and_outstanding_requests() -> 
         assert not watch.failed()
         await asyncio.sleep(0.04)
         assert watch.failed()
+        assert not watch.healthy()
         del session.request_errors["getUpdates"]
         await bot.get_updates()
         assert watch.healthy()
@@ -200,6 +202,32 @@ async def test_poll_health_counts_failed_attempts_and_outstanding_requests() -> 
         finally:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_poll_failure_streak_keeps_the_first_attempt_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    monkeypatch.setattr(
+        runtime,
+        "asyncio",
+        SimpleNamespace(get_running_loop=lambda: SimpleNamespace(time=lambda: now[0])),
+    )
+    watch = PollingWatch(failure_seconds=6)
+    watch.start()
+    session = FakeTelegramSession()
+    session.middleware(watch)
+    async with Bot("123456:synthetic", session=session) as bot:
+        await bot.get_updates()
+        session.request_errors["getUpdates"] = RuntimeError("synthetic poll failure")
+        for attempt_time in (101.0, 104.0):
+            now[0] = attempt_time
+            with pytest.raises(RuntimeError):
+                await bot.get_updates()
+            assert not watch.failed()
+        now[0] = 107.0
+        assert watch.failed()
+        assert not watch.healthy()
 
 
 async def test_backpressure_is_healthy_and_keeps_writing_heartbeats(  # noqa: PLR0915 - One SDK/heartbeat lifecycle.
@@ -309,10 +337,8 @@ async def test_keeper_uses_fixed_slots_and_stops_within_the_conservative_bound(
 
     async def renew() -> None:
         starts.append(clock.now)
-        if len(starts) == 1:
+        if len(starts) <= 2:
             clock.now += 0.12
-        elif len(starts) == 2:
-            clock.now += 0.02
         else:
             clock.now += 0.04
             if len(starts) > 10:
@@ -325,8 +351,9 @@ async def test_keeper_uses_fixed_slots_and_stops_within_the_conservative_bound(
     )
     keeper = bot_lock.LockKeeper(lock, renew_seconds=0.05, stop_after_seconds=0.15)
     await keeper.run()
-    assert starts == pytest.approx([100.05, 100.20, 100.25, 100.30, 100.35])
+    assert starts == pytest.approx([100.05, 100.20, 100.35])
     assert keeper.lost
-    assert clock.now <= keeper.last_renewed + 0.15 + lock.call_timeout + 0.005
+    assert keeper.last_renewed == starts[1]
+    assert clock.now <= starts[1] + 0.15 + lock.call_timeout + 0.005
     assert "ConnectionError" in caplog.text
     assert "private Redis error" not in caplog.text

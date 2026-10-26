@@ -61,7 +61,8 @@ async def test_keeper_renews_during_delayed_startup_then_reports_lost_key(
         await client.ping()
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.3, call_timeout=0.05)
         assert await lock.acquire()
-        keeper = LockKeeper(lock, renew_seconds=0.03, stop_after_seconds=0.12)
+        # Only LockNotOwnedError can stop within the 0.3 s assertion below.
+        keeper = LockKeeper(lock, renew_seconds=0.03, stop_after_seconds=5)
         task = asyncio.create_task(keeper.run())
         try:
             await asyncio.sleep(0.4)
@@ -83,28 +84,28 @@ async def test_heartbeat_starts_only_after_poll_health_and_cannot_block_renewal(
 ) -> None:
     async with create_redis_client(redis_session.redis_url) as client:
         await client.ping()
-        lock = PollingLock(client, redis_session.child(), ttl_seconds=0.25, call_timeout=0.1)
+        lock = PollingLock(client, redis_session.child(), ttl_seconds=1, call_timeout=0.3)
         assert await lock.acquire()
-        keeper = LockKeeper(lock, renew_seconds=0.03, stop_after_seconds=0.12)
+        keeper = LockKeeper(lock, renew_seconds=0.1, stop_after_seconds=0.5)
         healthy = False
 
         async def slow_heartbeat() -> bool:
-            await asyncio.sleep(0.08)
+            await asyncio.sleep(0.32)
             return await original()
 
         original = lock.write_heartbeat
         monkeypatch.setattr(lock, "write_heartbeat", slow_heartbeat)
         heartbeat = HeartbeatTask(
-            lock, keeper, healthy=lambda: healthy, failed=lambda: False, interval_seconds=0.02
+            lock, keeper, healthy=lambda: healthy, failed=lambda: False, interval_seconds=0.08
         )
         tasks = [asyncio.create_task(keeper.run()), asyncio.create_task(heartbeat.run())]
         try:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             assert not await client.exists(lock.heartbeat_key)
             healthy = True
-            await asyncio.sleep(0.35)
+            await asyncio.sleep(1.4)
             assert await client.exists(lock.heartbeat_key)
-            assert await client.pttl(lock.key) > 100
+            assert await client.pttl(lock.key) > 400
             assert not keeper.lost
         finally:
             for task in tasks:

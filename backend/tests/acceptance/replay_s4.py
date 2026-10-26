@@ -50,12 +50,10 @@ def acceptance_updates() -> list[Row]:
         Row("B16", (message(16, text="Buy bread", forwarded=True),)),
         Row("B17", (message(17, duration=20, caption="/dashboard"),)),
         Row("B18", (message(18, text="/start"),)),
-        Row(
-            "B19",
-            (message(19, text="/start"), message(20, text="Buy eggs"), message(21, duration=20)),
-            keyless=True,
-            degraded=True,
-        ),
+        Row("B19", (message(19, text="/start"),), keyless=True, degraded=True),
+        # Supplementary inputs pin the text/voice behaviour described beside B19.
+        Row("B19b", (message(20, text="Buy eggs"),), keyless=True, degraded=True),
+        Row("B19c", (message(21, duration=20),), keyless=True, degraded=True),
     ]
 
 
