@@ -26,6 +26,22 @@ Use native buttons and links. Icon-only controls need an aria-label.
 Event handlers start with handle. Tests are adjacent `*.test.ts(x)` files.
 Prettier sorts Tailwind classes inside cn and clsx calls.
 
+`func-style` enforces expressions in source files; use const arrow functions.
+jsx-a11y's recommended rules and control-has-associated-label enforce native
+controls, keyboard access and accessible names. Component tests also check icon
+buttons by role/name because lint cannot inspect a custom icon component.
+
+## Dashboard
+
+`api/client` validates HTTP responses with generated Zod schemas; the API barrel
+exports canonical wire types and schemas. Inject fetch for tests. Back-off and
+microsecond timestamp comparison are pure helpers in lib. Keep task-aware UI in
+features, since components cannot import api, even for types. App composes session
+and tasks; the board is keyed by token so requests and state never mix accounts.
+Transport tests inject EventSource, sleep and random. Component tests use StrictMode
+and real timers; test/setup supplies browser layout/dialog stubs guarded for Node.
+The lint regression runs in Node from src/test/eslintRules.test.ts.
+
 ## Local infrastructure
 
 Use root `yarn infra:up` and `yarn infra:stop`; direct Compose bypasses the guard.

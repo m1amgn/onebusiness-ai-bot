@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import boundaries from 'eslint-plugin-boundaries';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import tseslint from 'typescript-eslint';
 
@@ -30,7 +31,12 @@ export default defineConfig([
   },
   {
     files: ['src/**/*.tsx'],
-    extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
+    extends: [
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+      jsxA11y.flatConfigs.recommended,
+    ],
+    rules: { 'jsx-a11y/control-has-associated-label': 'error' },
   },
   {
     files: ['src/**/*.{ts,tsx}'],
@@ -45,6 +51,7 @@ export default defineConfig([
       'boundaries/files': [{ category: 'entry', pattern: 'src/main.tsx' }],
     },
     rules: {
+      'func-style': ['error', 'expression'],
       'boundaries/no-unknown-files': 'error',
       'boundaries/dependencies': [
         'error',
