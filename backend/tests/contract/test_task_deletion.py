@@ -86,6 +86,7 @@ async def test_deletion_does_not_reuse_task_ids_or_affect_other_messages(
         (deleted,) = await uow.tasks.add_many(
             1, deleted_message_id, (TaskDraft(title="Delete"),), now
         )
+        taskless_message_id = await create_message(uow, now, 3)
         await uow.commit()
     async with uows() as uow:
         await uow.tasks.delete(deleted.id)
@@ -94,12 +95,15 @@ async def test_deletion_does_not_reuse_task_ids_or_affect_other_messages(
         await uow.messages.erase_text_if_unused(999999)
         await uow.commit()
     async with uows() as uow:
-        new_message_id = await create_message(uow, now, 3)
+        new_message_id = await create_message(uow, now, 4)
         (new,) = await uow.tasks.add_many(1, new_message_id, (TaskDraft(title="New"),), now)
         assert new.id > deleted.id
         assert await uow.tasks.list_for_message(kept_message_id) == (kept,)
         kept_message = await uow.messages.get(kept_message_id)
         assert kept_message is not None
         assert kept_message.text == "Call home"
+        taskless_message = await uow.messages.get(taskless_message_id)
+        assert taskless_message is not None
+        assert taskless_message.text == "Call home"
         assert await uow.tasks.get_for_update(1, deleted.id) is None
         await uow.commit()

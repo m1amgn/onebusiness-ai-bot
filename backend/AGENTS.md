@@ -174,8 +174,12 @@ Task pages use opaque cursors and an optional status filter. Publish status even
 only after the use case commits. Keep the dev server's graceful shutdown timeout
 so open streams cannot block reload or Ctrl-C.
 DELETE returns 204 with no body or content type. The read-only acceptance replay
-tests/acceptance/replay_s6.py checks W1-W8 with the heuristic and in-memory ports;
-it needs no database, Redis, Telegram or extraction credentials.
+checks W1-W8 with the heuristic and in-memory ports. It needs no database, Redis,
+Telegram or extraction credentials:
+
+```sh
+uv run --locked --directory backend python tests/acceptance/replay_s6.py
+```
 
 Change Pydantic response models, then run root `yarn api:schema`; generated
 TypeScript and Zod files are never edited by hand. `yarn api:check` detects drift.

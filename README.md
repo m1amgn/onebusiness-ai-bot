@@ -246,6 +246,13 @@ internal-user channel rule. It starts no worker and connects to no store:
 uv run --locked --directory backend python tests/acceptance/replay_s3.py
 ```
 
+The read-only API replay checks the accepted task scenarios against synthetic
+messages. It uses in-memory stores and needs no credentials:
+
+```sh
+uv run --locked --directory backend python tests/acceptance/replay_s6.py
+```
+
 ## Local transcription
 
 For `yarn dev:whisper` only, install whisper.cpp (`brew install whisper-cpp` on
