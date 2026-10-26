@@ -1,0 +1,333 @@
+# S3 — Celery and Redis adapters: queue, events, tickets
+
+> **STATUS 2026-10-26: ACTIVE — stage design, round 2 (pre-handoff lens findings folded in; section 10); owner acceptance recorded (section 7); for the design gate.**
+
+Stage S3 of the umbrella design `docs/plans/2026-10-23-umbrella-assessment.md` (umbrella section 5, S3), read with its amendment 1 (umbrella section 12), the S1 design `docs/plans/2026-10-24-s1-skeleton.md` and the S2 design `docs/plans/2026-10-24-s2-domain-core.md` (accepted at its gate; its ports and departures X1–X13 are S3's input). The umbrella fixes the scope; this document fixes how S3 delivers it, records the owner's decisions for this stage, and lists where S3 departs from the umbrella's text (section 9, rows Y1–Y17). "Umbrella x.y" names a section of the umbrella design, "S2 x.y" a section of the S2 design; a bare number names a section of this document. The implementation steps are called S3.1 to S3.4.
+
+S2 is done and integrated into `umbrella/assessment` at `40ba17e`, which this branch merged before the gate. Every S2 name used here was read at `0032a12` and re-checked at `40ba17e` (the later S2 commits change no name S3 uses): the ports `JobQueue`, `EventPublisher`, `TicketStore`, `UserRepository.get_token_version`, `TokenGenerator` (synchronous), `UnitOfWorkFactory`; the models `TicketClaims`, `TranscriptionJob`, `NotificationJob`, `DomainEvent`, `AuthenticatedUser`; `publish_events`; `SeedSettings`, `SeedPorts`, `seed`, `build_seed_ports`; the test helpers `tests/databases.py`, `tests/processes.py`, `tests/fakes/calls.py` and the fixtures `database_url`, `postgres_uows`. S3.1 re-reads them at its starting commit; a difference is recorded in the stage diary before any code is written.
+
+## 1. Problem
+
+The asynchronous half of the application has no code. The bot (S4) must enqueue transcription jobs, the worker (S5) must consume them and enqueue notifications, the API (S6) must hand out one-time real-time tickets and stream each user's events, and every writer must publish task events after its commit. S3 builds the Redis and Celery side of this: the Celery application, the job queue, the worker process runtime, the event publisher and subscriber, the ticket store and its two use cases, the developer command that starts a worker, event publishing in the seed command, and the isolation of integration tests on the shared Redis. S3 builds no Telegram, transcription, extraction or HTTP code and no real job handler.
+
+## 2. Decisions
+
+Taken with the repository owner on 2026-10-24. The owner's answers were the letter of an option and are quoted verbatim.
+
+| # | Decision | Owner's answer |
+|---|---|---|
+| S3-D1 | `TELEGRAM_BOT_TOKEN` is optional for both worker roles. Without it a worker starts, logs one warning naming the variable, and runs; no job reaches it, because without a bot no voice message arrives (Y1). The options were: (a) required, as umbrella 3.1 says, which breaks 3.7's promise that a reviewer without a token runs everything except `bot`; (b) optional with a warning, as for the provider keys. | "b" |
+| S3-D2 | S3 builds the Redis event subscriber adapter that S6's SSE route uses: it subscribes to one user's channel, returns only after Redis confirmed the subscription, and yields raw event JSON or an idle tick. Whether S6 puts a port and a use case in front of it, and the heartbeat and `token_version` re-check, stay S6's design (Y2). The options were the architecture approaches of this stage: (A) the adapter only; (B) the adapter plus a domain `EventStream` port and a stream use case with the heartbeat and revocation rules, which moves S6's logic into S3; (C) no subscriber in S3, only a test helper, which leaves the two Redis traps of 3.6 to be rediscovered by S6. Ports are structural `Protocol`s, so S6 can add one in front of A without changing it. | "A" |
+
+Designer decisions, settled from the code and executed probes (diary `.tasks/2026-10-24-s3-redis-design.md`, "D2 — task context map"; probe and lens reports `.tasks/artifacts/2026-10-24-s3/`, local):
+
+- **macOS workers.** billiard 4.3.1 starts pool children with `spawn` on macOS (`billiard/context.py:370-378`), and Celery prepares a spawned child only when `FORKED_BY_MULTIPROCESSING` is set (`celery/concurrency/prefork.py:67-73`). Without it every task on the owner's Mac fails with `ValueError: not enough values to unpack` and is acknowledged, so it is lost (executed). The launcher sets `FORKED_BY_MULTIPROCESSING=1` when `sys.platform == "darwin"`, and `worker_init` refuses to start a prefork worker on macOS without it. Spawn is kept, because it inherits nothing across the fork, which is umbrella 3.1's rule. Linux (the image) uses `fork` and is untouched (Y4).
+- **Broker down at start**: the worker retries (`broker_connection_retry_on_startup = True`, Celery's behaviour made explicit); Compose orders the services.
+- **Per-task time limits** are declared where the task is registered, not in `task_annotations`: both behave the same, and the registration cannot name a task wrongly (executed). S3's test tasks use it; S5 follows it.
+- **Test isolation** uses kombu's `global_keyprefix` for every Celery name and a namespace argument for every key and channel the application's own Redis code names; a test session's liveness is proved by a named anchor connection (3.9).
+- **Every Redis call is bounded in time**, not left to the operating system's 75 s connect timeout or to a server that accepts and never answers (3.3, 3.5).
+
+## 3. Design
+
+### 3.1 Files
+
+New files:
+
+```
+backend/src/taskbot/
+  domain/limits.py                      + MAX_COUNTDOWN_SECONDS = 600
+  domain/errors.py                      + InvalidTicketError
+  application/realtime_tickets.py       IssueRealtimeTicket, ConsumeRealtimeTicket (3.7)
+  infrastructure/settings/redis.py      RedisSettingsMixin (3.2)
+  infrastructure/settings/worker.py     BrokerSettings, WorkerSettings (3.2)
+  infrastructure/redis/__init__.py
+  infrastructure/redis/client.py        create_redis_client, namespaced, user_channel (3.5)
+  infrastructure/redis/events.py        RedisEventPublisher (3.5)
+  infrastructure/redis/subscription.py  subscribe_user_events, UserEventSubscription,
+                                        EventStreamError, EventStreamGapError (3.6)
+  infrastructure/redis/tickets.py       RedisTicketStore (3.7)
+  infrastructure/celery/__init__.py
+  infrastructure/celery/app.py          create_celery_app, the umbrella 3.1 configuration (3.3)
+  infrastructure/celery/job_queue.py    CeleryJobQueue (3.4)
+  entrypoints/settings.py               load_settings: validate or exit naming the variables (3.8)
+  entrypoints/worker/__init__.py        the Celery app for `-A`, imports the signal handlers
+  entrypoints/worker/__main__.py        the role launcher (3.8)
+  entrypoints/worker/launcher.py        build_worker_argv, worker_environment, beat_schedule_path (pure)
+  entrypoints/worker/signals.py         worker_init, worker_ready, worker_process_init, worker_process_shutdown
+  entrypoints/worker/runtime.py         the per-child loop, run_async, current_container (3.8)
+  entrypoints/worker/container.py       WorkerContainer: the per-child composition root
+backend/tests/
+  redis_sessions.py                     R-ISO for Redis: session, child namespaces, anchor, stale sweep (3.9)
+  workers.py                            running_worker: start, readiness, teardown (3.10)
+  worker_tasks.py                       test-only Celery tasks (3.10)
+  fakes/messaging.py                    recording JobQueue, EventPublisher and TicketStore fakes on S2's Calls log
+  tcp_proxy.py                          a local TCP proxy that can freeze its traffic (A4)
+  unit/…  integration/…                 section 5
+  acceptance/replay_s3.py               read-only replay of the D6 table (section 7)
+```
+
+Changed files: `backend/pyproject.toml` (the redis pin `>=6.4,<6.5`, Y14; a mypy override for the untyped `celery`, `kombu` and `billiard` packages and for untyped decorators in the task modules, each with a comment), `backend/uv.lock` (the changed specifier only; the resolved versions stay), `infrastructure/settings/base.py` (`TASKBOT_ENV_FILE`, Y15), `application/publishing.py` (Y16), `entrypoints/seed/__init__.py` and `__main__.py` and `infrastructure/settings/seed.py` (3.11, Y17), `backend/tests/conftest.py` (the Redis session fixture beside S2's database fixtures), `backend/tests/integration/settings.py` (inherits `RedisSettingsMixin`), `backend/tests/unit/test_env_example.py` and `test_settings.py` (the new models; the environment variables the tests clear), `.env.example` (`REDIS_NAMESPACE`), root `package.json` (`dev:worker`), `README.md`, `backend/AGENTS.md`, and the status header of `docs/plans/2026-10-24-s1-skeleton.md` (its section 6 item 2 is superseded in part by Y6). No package is added or upgraded, so no image rebuild. No file comes near 700 lines; the largest is `tests/redis_sessions.py`, about 200 lines.
+
+### 3.2 Settings
+
+`RedisSettingsMixin(BaseModel)` (a `BaseModel`, like S1's extractor mixin; `infrastructure/settings/redis.py`):
+
+- `redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")`: the application's own Redis (events, tickets, the bot's lock and heartbeat).
+- `celery_broker_url: RedisDsn | None = None`; an empty value is unset (`env_ignore_empty`, executed).
+- `redis_namespace: str = ""`: a prefix for every key, channel and Celery name; empty in development and Compose, set only by test sessions. A validator accepts the empty string or `^[a-z0-9_]{1,64}:([a-z0-9_]{1,32}:)?$` (a session namespace, optionally with one child level, 3.9).
+- `broker_url` (property): `celery_broker_url` when set, otherwise `redis_url` with the path replaced by `/1` through `urlsplit(...)._replace(path="/1")`, which keeps credentials and the query (executed; a string `rsplit` drops the query).
+
+Entry-point models (`infrastructure/settings/worker.py`):
+
+- `BrokerSettings(BaseAppSettings, RedisSettingsMixin)`: every field has a default, so building the Celery app for `-A` can fail only on a malformed URL (Y13).
+- `WorkerSettings(BaseAppSettings, DatabaseSettingsMixin, RedisSettingsMixin)`: `worker_role: Literal["transcribe", "notify"]` (required); `telegram_bot_token: SecretStr | None = None` (S3-D1). The database mixin is S2's (required `DATABASE_URL`, `postgresql+asyncpg` only). No extraction or provider field: umbrella 3.1 says the notify role never validates them; S5 adds a transcribe-only model with the extractor mixin and the provider fields and builds it for that role.
+
+`SeedSettings` (S2) gains `RedisSettingsMixin`; S4 and S6 add it to `BotSettings` and `ApiSettings`. `InfraTestSettings` inherits it instead of repeating the Redis default. `.env.example` gains `REDIS_NAMESPACE=` with the comment "test sessions only; leave empty". `test_env_example.py` adds `WorkerSettings` and `BrokerSettings` to its key check; `test_settings.py`'s autouse fixture also clears `REDIS_URL`, `CELERY_BROKER_URL`, `REDIS_NAMESPACE`, `WORKER_ROLE`, `TELEGRAM_BOT_TOKEN` and `DATABASE_URL`.
+
+**`TASKBOT_ENV_FILE`** (Y15). `BaseAppSettings` reads the repository `.env` (S1). A worker subprocess started by a test would then take the developer's `TELEGRAM_BOT_TOKEN` or `CELERY_BROKER_URL` from it, because an empty value in the subprocess environment counts as unset (executed). `BaseAppSettings`'s `env_file` becomes `os.environ.get("TASKBOT_ENV_FILE")` when that variable is set and the repository `.env` otherwise; worker subprocesses in tests set it to `/dev/null`. In-process tests keep passing `_env_file=None`.
+
+### 3.3 The Celery application (`infrastructure/celery/app.py`)
+
+`create_celery_app(*, broker_url: str, namespace: str) -> Celery` builds the shared application object of umbrella 3.1: configuration and routes, no tasks. `namespace` has no default, so no caller can forget it; production passes `settings.redis_namespace` (empty). The bot and the API (S4, S6) call it to produce; the worker entry point calls it and registers tasks. Creating it opens no connection (executed: a closed-port broker URL builds).
+
+| Setting | Value | Why |
+|---|---|---|
+| `task_acks_late`, `task_reject_on_worker_lost` | `True` | umbrella 3.1: a crashed child's message returns to the queue |
+| `worker_prefetch_multiplier` | `1` | umbrella 3.1 |
+| `task_ignore_result` | `True`; no result backend | umbrella 3.1 |
+| `task_serializer`, `accept_content` | `"json"`, `["json"]` | umbrella 3.4: JSON payloads |
+| `task_routes` | `{TranscriptionJob.name: {"queue": "transcription"}, NotificationJob.name: {"queue": "notification"}}`, built from the S2 job classes | one source for names and queues |
+| `worker_hijack_root_logger` | `False` | umbrella 3.1 |
+| `worker_proc_alive_timeout` | `30` | Y5: a replacement child that takes longer than the default 4 s to start is killed in a loop while `inspect ping` stays green (executed); a cold spawn child re-imports the whole stack on a loaded machine |
+| `broker_connection_retry_on_startup` | `True` | 2 |
+| `broker_connection_timeout` | `4` | the connection budget kombu uses for a publish (executed: it, not the retry count, bounds an unroutable host) |
+| `task_publish_retry_policy` | `{"max_retries": 2, "interval_start": 0, "interval_step": 0.2, "interval_max": 0.5}` | 3.4 |
+| `broker_transport_options` | `{"visibility_timeout": 3600, "socket_connect_timeout": 2, "socket_timeout": 5}`, plus `"global_keyprefix": namespace` when the namespace is not empty | umbrella 3.1; 3.4; 3.9 |
+
+`socket_timeout` bounds a broker that accepts a connection and never answers: without it `send_task` was still blocked after 15 s; with 3 s it raised at 6 s, and a worker with 3 s ran idle for 12 s, a 4 s task and a ping without errors (executed). The numbers of the last four rows are tuned in S3.2 against A3; the commit puts the final values into this table and A2 compares them.
+
+The umbrella's time limits stay per task (umbrella 3.1, 3.6). Every task is a plain synchronous function; none is wrapped with `functools.wraps` (umbrella section 9). The decorator form `@app.task(...)` fails mypy strict as an untyped decorator (executed); the override of 3.1 allows untyped decorators only in the task modules (`tests.worker_tasks`, and S5's `taskbot.entrypoints.worker.tasks*`).
+
+### 3.4 The job queue (`infrastructure/celery/job_queue.py`)
+
+`CeleryJobQueue(app: Celery)` implements S2's `JobQueue`:
+
+```python
+async def enqueue(self, job: TranscriptionJob | NotificationJob, *, delay_seconds: int = 0) -> None
+```
+
+1. A negative `delay_seconds` raises `ValueError`. A delay above `MAX_COUNTDOWN_SECONDS` (600 s) is clamped to 600 s and logged at debug (Y11). The bound is a policy that keeps every countdown far below the 3600 s visibility timeout, after which a waiting message would be restored early. Clamping is safe because every consumer re-reads the job's state in the database: an early delivery of a `LeaseLive` re-enqueue (up to 450 s) or of a `NotificationNotDue` re-enqueue (an S2 cooldown can be 900 s, S2 3.3) meets the same refusal again and re-enqueues the rest of the wait.
+2. The call runs on a dedicated `ThreadPoolExecutor(max_workers=4, thread_name_prefix="enqueue")` owned by the adapter: `await loop.run_in_executor(self._executor, partial(self._app.send_task, job.name, kwargs=job.model_dump(mode="json"), queue=job.queue, countdown=delay or None))`. `send_task` is synchronous network I/O (`celery/app/base.py:842`); a direct call blocked the event loop for 0.6 s with Redis down, through a thread 2 ms (executed). A dedicated executor keeps stuck enqueues from filling the default executor, which also serves `getaddrinfo`: forty stuck enqueues there blocked name resolution for 5 s (executed). The adapter touches `app.producer_pool` once in its constructor, because the pool's first creation is not locked (`celery/app/amqp.py:629-635`), and `close()` shuts the executor down.
+3. `kombu.exceptions.OperationalError` becomes `EnqueueError` with the cause chained. With Celery's defaults a refused connection fails in 0.6 s, an unroutable host after the operating system's 75 s connect timeout, and a silent server never (executed); the settings of 3.3 bound all three (A3).
+
+The job name comes from the job class (S2 `ClassVar`), never from a literal: a misspelled task name is acknowledged and discarded by the worker with one log line (executed).
+
+### 3.5 Redis clients, names and the event publisher
+
+`create_redis_client(url: str, *, client_name: str | None = None) -> Redis` (`infrastructure/redis/client.py`) is the one place that sets the client options: `socket_connect_timeout=2`, `socket_timeout=5`, `socket_keepalive=True`, `health_check_interval=30`, `retry=redis.asyncio.retry.Retry(redis.backoff.ExponentialWithJitterBackoff(base=0.1, cap=1), 3)` (the asynchronous `Retry` class; `redis.retry.Retry` is a different, synchronous one; `Redis.from_url` otherwise gives zero retries; executed), `decode_responses=True`. `Redis.from_url` is typed `Any`, so the function assigns it to an annotated local before returning it. Creating it opens no connection. The retry policy recovers a dropped connection; it does not retry a failed connect (a closed port fails at once, an unroutable host after the 2 s connect timeout; executed). Every process builds its clients through this function.
+
+`namespaced(namespace, key) -> str` and `user_channel(namespace, user_id) -> str` (`f"{namespace}events:user:{user_id}"`, where `user_id` is the internal `users.id`, as on S2's events) are the only places that spell Redis names; the bot's lock and heartbeat keys (S4) use `namespaced` too. Pub/sub channels are server-wide, not per database (executed), so a test channel must carry the namespace whatever database it uses.
+
+`RedisEventPublisher(client, namespace)` implements S2's `EventPublisher`: `publish(event)` sends `PUBLISH user_channel(namespace, event.user_id) event.model_dump_json()` inside `asyncio.timeout(1)`. The routing id comes from the event object, because S2 excludes `user_id` from the JSON. A receiver count of 0 is not an error. A Redis error or the timeout propagates as is. S2's `publish_events` logs and continues (umbrella 3.4); with Y16 it stops a batch at its first failure, so a message of ten tasks costs at most about one second of delay when Redis is down instead of ten times the client's timeouts (executed: 2 s per event for an unroutable host, 5 s for a silent server).
+
+### 3.6 The event subscriber (S3-D2, `infrastructure/redis/subscription.py`)
+
+`async with subscribe_user_events(client, namespace, user_id) as subscription:` yields a `UserEventSubscription`.
+
+- **Entry.** It subscribes to `user_channel(namespace, user_id)` and reads messages until it receives the `subscribe` confirmation for that channel. `await pubsub.subscribe(...)` returns when the command is written, before Redis registers it: in 185 and 216 of 300 trials another connection still saw no subscriber (two executions). So an event published after entry returns is always received, which is what "subscribe before sending headers" in umbrella 3.6 needs. No confirmation within 5 s, or a Redis error, raises `EventStreamError`.
+- **`await subscription.next(timeout_seconds: float) -> str | None`** returns the next event's raw JSON, or `None` when nothing arrived by the deadline (S6's heartbeat tick). It always reads with a finite timeout (`get_message(timeout=…)`; with no timeout, `socket_timeout` makes redis-py reconnect silently every 5 s, executed) and loops until the deadline, because a swallowed health-check reply can end a read early (executed). The payload is not parsed: it cannot be validated back into S2's models, because `user_id` is excluded from the JSON (executed); S6 forwards the string and may read `type`.
+- **Idle check.** When a deadline passes with no message, `next` sends `PING` on the subscription's connection and waits for the `pong` within 2 s. A missing pong raises `EventStreamError`. A link that is half open (the peer gone without a reset) otherwise looks like a quiet channel forever: through a freezing proxy twelve seconds of `None` passed while `PUBLISH` still counted the subscriber (executed). `socket_keepalive` (3.5) is the operating system's slower backstop.
+- **Gaps.** When a connection drops, redis-py reconnects and resubscribes, and messages published during the gap are lost (executed). The second `subscribe` confirmation is the signal: `next` raises `EventStreamGapError` (a subclass of `EventStreamError`). In forty random kills against a publisher sending every 3 ms, every lost message was preceded by that signal (executed). A Redis error while reconnecting (Redis unreachable) raises `EventStreamError`.
+- **Contract for S6.** Any `EventStreamError` means: close the SSE stream; the dashboard reconnects and refetches the task list (umbrella D-08). No other exception leaves the adapter for a Redis or timeout condition.
+- **Exit** unsubscribes and closes the pub/sub connection.
+
+### 3.7 Tickets and their use cases
+
+`RedisTicketStore(client, tokens: TokenGenerator, namespace, ttl_seconds=30)` implements S2's `TicketStore` (`infrastructure/redis/tickets.py`); the token generator is S2's synchronous port (`secrets.token_urlsafe(32)`); 30 s is umbrella 3.7's ticket TTL, kept as the adapter's default.
+
+- `issue(claims) -> str`: generate a ticket and run `SET namespaced(ns, "ticket:" + ticket) claims.model_dump_json() EX ttl NX`. Redis answers `None`, not `False`, when `NX` refuses (executed); that answer (a collision of 256-bit random values) raises `RuntimeError`.
+- `consume(ticket) -> TicketClaims | None`: a ticket that is not 1–64 URL-safe ASCII characters returns `None` without a Redis call; otherwise `GETDEL`. A missing or expired key returns `None`. A value that does not validate as `TicketClaims` returns `None` and logs once: `GETDEL` already deleted it, so single use holds. A Redis error (including `WRONGTYPE`) propagates. Fifty concurrent consumers of one ticket gave exactly one winner in each of twenty rounds; `GET` then `DEL` gave fifty (executed).
+
+Use cases (`application/realtime_tickets.py`; ports only):
+
+- `IssueRealtimeTicket(tickets).execute(user: AuthenticatedUser) -> str` stores `TicketClaims(user.user_id, user.token_version)`; S6 calls it after S2's `AuthenticateToken`.
+- `ConsumeRealtimeTicket(tickets, uows: UnitOfWorkFactory).execute(ticket: str) -> TicketClaims` consumes the ticket, then reads `users.get_token_version(claims.user_id)` in a unit of work that it leaves without a commit (read only). It raises `InvalidTicketError` when the ticket is unknown, expired or already used, when the user no longer exists (`None`), or when the stored `token_version` differs from the ticket's (a ticket issued before a `/dashboard` rotation; umbrella 3.6 and G4). The ticket is gone in every case. S6 maps `InvalidTicketError` to `401`, and S6's first `token_version` re-check after the subscription is confirmed closes the window between this check and the stream's start (3.6 hands S6 the confirmation; the check is S6's).
+
+### 3.8 The worker process
+
+Both services run `python -m taskbot.entrypoints.worker` (umbrella 3.1). Python imports the package's `__init__` before `__main__` (executed), so the package does only what `celery -A taskbot.entrypoints.worker` also needs:
+
+- `entrypoints/worker/__init__.py`: `broker_settings = load_settings(BrokerSettings)`, `app = create_celery_app(broker_url=broker_settings.broker_url, namespace=broker_settings.redis_namespace)`, `import taskbot.entrypoints.worker.signals` (connects the handlers). S5 adds its task modules here. `launcher.py` imports nothing from the package, so its unit tests do not create an app or connect signals.
+- `entrypoints/settings.py`: `load_settings(model: type[T]) -> T` builds the model and, on `ValidationError`, writes `Invalid configuration: <VARIABLE>: <message>` per error (field names upper-cased into variable names) to stderr and raises `SystemExit(2)`. Every entry point uses it (S4, S6 included).
+
+**Launcher** (`__main__.py`, with the pure helpers in `launcher.py`):
+
+1. The role is `argv[1]` when it is present and does not start with `-`; otherwise the process environment's `WORKER_ROLE` (Compose sets it). The `.env` file is never the source of the role, so `yarn dev:worker` without a role fails in a clean shell even though `.env.example` carries `WORKER_ROLE=transcribe`. Every other argument is passed to Celery unchanged (tests pass `--include tests.worker_tasks`).
+2. The role is written to `os.environ["WORKER_ROLE"]`, then `load_settings(WorkerSettings)`: a wrong or missing role or a missing `DATABASE_URL` exits 2 naming the variable before Celery starts (Y7).
+3. `worker_environment(environ, platform)` returns the environment with `FORKED_BY_MULTIPROCESSING=1` added on darwin (2).
+4. `os.execve(sys.executable, [sys.executable, "-m", "celery", *build_worker_argv(role, beat_schedule_path(namespace)), *extra], env)`: the process is replaced, so its PID stays (PID 1 in a container) and SIGTERM reaches Celery's main process directly (executed).
+
+`build_worker_argv(role, schedule_path)`:
+
+| Role | Arguments after `-A taskbot.entrypoints.worker worker` |
+|---|---|
+| `transcribe` | `-Q transcription -n transcribe@%h --pool prefork --concurrency 1 --without-gossip --without-mingle --without-heartbeat -l INFO` |
+| `notify` | `-Q notification -n notify@%h --pool prefork --concurrency 2 --without-gossip --without-mingle --without-heartbeat -l INFO -B -s <schedule_path>` |
+
+Gossip, mingle and worker heartbeats serve multi-node clusters; with one replica per service they only add start time (about 1 s) and Redis traffic, and `inspect ping` still answers without them (executed). `beat_schedule_path(namespace)` is `tempfile.gettempdir()/celerybeat-schedule` when the namespace is empty and `…/celerybeat-schedule-<namespace with ":" replaced by "_">` otherwise (Y9). On Python 3.14 beat stores the schedule as SQLite in WAL mode, so the path names up to three files (`<path>`, `<path>-wal`, `<path>-shm`); a SIGKILL leaves all three (executed).
+
+**Signals** (`signals.py`, registered with the `signal.connect(handler)` call form, which type-checks under mypy strict):
+
+- `worker_init` (main process, before any child): `load_settings(WorkerSettings)`, so a worker started directly with `celery -A … worker` is validated too (a `SystemExit(2)` here ends the worker with exit code 2, executed); on darwin with the prefork pool and no `FORKED_BY_MULTIPROCESSING`, it writes `Run the worker through python -m taskbot.entrypoints.worker on macOS` to stderr and exits 2, because such a worker loses every task. `worker_init` opens no connection. S5 adds the provider checks of umbrella 3.1 here.
+- `worker_ready` (main process): the start line. Application loggers are not configured yet when `worker_init` runs with `worker_hijack_root_logger = False`, so a line logged there is dropped (executed). One line names the role, the queue, the node, the broker URL without its password and the namespace. When the token is empty, a second line warns `TELEGRAM_BOT_TOKEN is not set: Telegram calls will fail` (S3-D1). When no handler for the role's queue is registered (S3's state until S5 lands), a third line warns `No job handler is registered for queue <queue>: its jobs will be discarded`: on the shared development broker such a worker consumes and drops other worktrees' real jobs (section 8).
+- `worker_process_init` (each pool child, again in every replacement child): `runtime.start_child()` loads `WorkerSettings` itself (a spawned child inherits nothing; a failure here is logged and raises, the child dies and the pool's restart limit shows it, which cannot happen after the main process validated the same environment), creates a new event loop, sets it as current, and builds the `WorkerContainer` for the role: S2's SQLAlchemy engine and unit-of-work factory, the clock, a Redis client, `RedisEventPublisher`, `CeleryJobQueue` over the package's `app` (in a spawned child the worker's own app object is an unpickled copy with the same configuration, executed; both produce the same messages). Nothing connects: engines and clients connect on first use, and the child must be up within `worker_proc_alive_timeout`. S5 adds the role's transcriber, extractor and Telegram adapters.
+- `worker_process_shutdown` (the child): closes the job queue's executor, the Redis client and the engine on the loop, then closes the loop. It runs on warm shutdown; after a hard time limit billiard sends SIGTERM and kills the child 0.1 s later, so a slow close does not finish there; after an external SIGKILL it does not run at all (executed). Closing is a courtesy; no correctness depends on it.
+
+**`run_async(coroutine)`** (`runtime.py`), the bridge every task uses:
+
+```python
+def run_async[T](coroutine: Coroutine[object, object, T]) -> T:
+    loop = current_loop()                     # RuntimeError outside a pool child; closes the coroutine first
+    task = loop.create_task(coroutine)
+    try:
+        return loop.run_until_complete(task)
+    except BaseException:
+        task.cancel()
+        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+        raise
+```
+
+A soft time limit raises `SoftTimeLimitExceeded` inside `run_until_complete`. A bare `run_until_complete(coroutine)` leaves the interrupted coroutine pending on the loop, where it keeps running during the next task; cancelling it lets its `async with` and `finally` blocks roll back (executed). `current_container()` returns the child's composition root to task code.
+
+### 3.9 R-ISO for Redis (`tests/redis_sessions.py`)
+
+Umbrella section 12: a test session prefixes everything it names and deletes its keys at the end; cleanup of what a killed session left may use age only to pick candidates, and must prove that no live session owns them. S3's proof is the session's anchor connection; item 6 states where it is weaker than S2's PostgreSQL proof (Y12).
+
+1. **Session id** `taskbot_test_<unix-time>_<8 hex>`, the same form as S2's databases; the session namespace is the id plus `:`. **Child namespaces**: `session.child()` returns `<id>:t<n>:` with a counter, and every test that writes to Redis or starts a worker uses its own child, so messages one test leaves (for example A3's unconsumed jobs) never reach another test's worker, and no test depends on order. Every child name still begins with `<id>:`, so the session's cleanup and the sweep cover it. Under a namespace, Celery's names (`global_keyprefix`), event channels, ticket keys and locks all start with it; the queue names stay `transcription` and `notification` (two namespaces using one queue name never see each other's messages, executed).
+2. **Databases**: the application's adapters use the development `REDIS_URL` database (0) and the broker its derived database (1), as in development; every name is namespaced, so development data is never touched. The session's cleanup and the sweep cover both databases.
+3. **`open_redis_session()`**: an async context manager. It opens an **anchor** client with `client_name=<id>` and sends `PING`, then starts a background task that pings the anchor every 5 s and catches and logs every Redis error, so the task survives a Redis restart and the next successful ping re-sends the name (redis-py re-sends the name on reconnect, executed). It yields `RedisSession(id, namespace, redis_url, broker_url)`; in `finally` it deletes its keys in both databases (`SCAN MATCH <id>:*` and `UNLINK` in batches of 500), stops the ping task and closes the anchor. No other client of the session (worker, adapters) uses the session id as its name, so an orphaned worker cannot keep a dead session alive.
+4. **`drop_abandoned_namespaces(now, *, ids=None)`**, run by the session fixture before its own session starts:
+   1. In each database, `SCAN MATCH taskbot_test_*`; for each key, the part before the first `:` must `re.fullmatch` `taskbot_test_([0-9]+)_[0-9a-f]{8}`; candidates are those ids whose time part is older than six hours before `now` and that are not the session's own; `ids` limits the candidates (for the A7 test).
+   2. Only after the scan: read `CLIENT LIST` and collect the client names; wait 2 s and read it again. An id is alive when it appears in either read. The anchor exists before the session's first key, so a key seen in the scan implies an anchor opened earlier; reading the client list after the scan cannot miss a live owner whose anchor is connected.
+   3. For each candidate that is not alive: `SCAN MATCH <id>:*` and `UNLINK` in both databases. `UNLINK` of an absent key is a no-op, so two sweeps at once are harmless (executed with 20,000 keys).
+   A SIGSTOP-paused process keeps its connection in `CLIENT LIST` (15 s observed); a SIGKILLed process disappears in 0.06 s; the server's idle `timeout` is 0 (executed). A heartbeat key with a TTL was rejected: it expires while a live session is paused (executed). Pub/sub channels vanish with their subscribers and need no cleanup.
+5. **Fixture**: a session-scoped `redis_session` fixture in `tests/conftest.py`, beside S2's `database_url`; Redis tests request it, PostgreSQL-only tests do not pay for it.
+6. **Where the proof is weaker** (Y12). PostgreSQL refuses a `DROP DATABASE` atomically while a connection exists; Redis has no such operation, and an anchor that drops while its session lives (a Redis restart, a `CLIENT KILL`) makes the session look dead until its next ping. A sweep in that window deletes a live test session's keys and fails that session's tests. Only sessions older than six hours are exposed; the 5 s ping and the two reads 2 s apart narrow the window; development data is never at risk, because the sweep matches only `taskbot_test_` names.
+
+### 3.10 Worker tests (`tests/workers.py`, `tests/worker_tasks.py`)
+
+`running_worker(role, namespace, *, log_dir)` is an async context manager that starts the launcher (`sys.executable -m taskbot.entrypoints.worker <role> --include tests.worker_tasks`) with `asyncio.create_subprocess_exec` in its own process group (`start_new_session=True`; S2's `tests/processes.py` pattern) and an explicit environment: the session's `REDIS_URL` and `CELERY_BROKER_URL`, `REDIS_NAMESPACE=<child namespace>`, `TASKBOT_ENV_FILE=/dev/null`, `DATABASE_URL=postgresql+asyncpg://taskbot:taskbot@127.0.0.1:1/taskbot_test_0_00000000` (a closed port: S3's test tasks never use the database, and one that tried would fail instead of writing anywhere), no `TELEGRAM_BOT_TOKEN`, `TASKBOT_TEST_PARENT_PID=<pytest's pid>`, `PYTHONUNBUFFERED=1`. The worker's output goes to a file in `log_dir`, never to a pipe that could fill. Readiness: poll `app.control.inspect(destination=[node], timeout=1).ping()` through `asyncio.to_thread` until the node answers (30 s deadline); the "ready" log line comes before the remote-control channel answers, and a single ping can miss (executed). Teardown: SIGTERM to the main PID only (SIGTERM to the process group kills the running task instead of finishing it, executed), wait up to 30 s, then SIGKILL of the group; assert that no process of the group remains; delete `<beat_schedule_path(namespace)>*`. The worker's PID is the launcher's (exec).
+
+`tests/worker_tasks.py` (test-only, loaded through `--include`): tasks named `s3test.*`, each appending JSON lines (`time`, `pid`, `marker`, `redelivered`) to a file named in its kwargs: `sleep(seconds, marker, log)`; `publish(user_id, log)` (runs `run_async` on the container's `RedisEventPublisher`, proving the per-child loop and composition root); `loop_identity(log)` (records `id(current_loop())` and the number of pending tasks); `soft_limit(log)` (soft 1 s, hard 3 s; awaits a 10 s sleep and records `SoftTimeLimitExceeded`). Two test-only hooks: an orphan guard connected to `worker_ready` starts a daemon thread that terminates the worker when the PID in `TASKBOT_TEST_PARENT_PID` is gone (executed: gone in 3 s after a killed parent); a `worker_process_init` handler sleeps `TASKBOT_TEST_REPLACEMENT_INIT_DELAY` seconds in replacement children only (the first child records its start in the log; a later child of the same worker sleeps), to prove the `worker_proc_alive_timeout` of 3.3.
+
+### 3.11 `yarn dev:worker` and `yarn dev:seed`
+
+`package.json`: `"dev:worker": "uv run --locked --directory backend python -m taskbot.entrypoints.worker"`; yarn 1 appends the arguments, so `yarn dev:worker transcribe` and `yarn dev:worker notify` run in two terminals (executed). A node wrapper would be a second place that knows the roles. Ctrl-C sends SIGINT to the whole group: the pool child ignores it, the running task finishes, and Celery's warm shutdown on SIGINT exits with status 1 (`celery/apps/worker.py:462-463`, executed); a second Ctrl-C is a cold shutdown. The README says so, and that the prompt can return a few seconds before a running task has finished.
+
+`yarn dev:seed` (S2 3.8, built in S2.5): `SeedPorts` gains `publisher: EventPublisher`, and `build_seed_ports` builds a `RedisEventPublisher` over `create_redis_client(settings.redis_url)` with the settings' namespace; `seed` calls `await publish_events(ports.publisher, events)` after both commits and returns `user_id` in `SeedResult`; `__main__` prints `Events channel: events:user:<user_id>` and closes the client in `finally` (Y17). The channel carries the internal `users.id`, which differs from the Telegram id given on the command line. One run publishes one `task.created` per task and one `auth.revoked` (S2's `IssueDashboardToken`). With Redis unreachable the seed still prints the token and the link; `publish_events` logs one line and skips the rest (Y16).
+
+## 4. Implementation steps
+
+One commit each, in this order; each step runs every check that exists after it, leaves `git status --short` empty, and updates `backend/AGENTS.md` for what it adds.
+
+| Step | Scope | Done when |
+|---|---|---|
+| S3.1 Redis adapters and test isolation | re-read S2 at the merge commit; constants and `InvalidTicketError`; `RedisSettingsMixin`, `TASKBOT_ENV_FILE`, the redis pin; `infrastructure/redis/` (client, names, publisher, subscriber, ticket store); `publish_events` stop-at-first-failure; ticket use cases; `tests/fakes/messaging.py`, `tests/tcp_proxy.py`; `tests/redis_sessions.py` and the fixture; `InfraTestSettings`; `.env.example`; unit and integration tests | A1a, A4, A5, A7a–c |
+| S3.2 Celery application and job queue | `create_celery_app`; `CeleryJobQueue`; the mypy override; unit tests of the configuration; integration tests of the queue | A2, A3 |
+| S3.3 Worker runtime | `entrypoints/settings.py`; `BrokerSettings`, `WorkerSettings`; `entrypoints/worker/` (package, launcher, signals, runtime, container); `tests/workers.py`, `tests/worker_tasks.py`; `yarn dev:worker`; README rows | A1b, A6, A7d, A9 |
+| S3.4 Seed publishing, guides, replay | seed ports, publish call and channel line; `tests/acceptance/replay_s3.py`; `backend/AGENTS.md` (the R-ISO sentence about "Celery queues" rewritten for Y6; adapters, namespaces, worker rules); the S1 status note; README | A8, A10; `yarn verify` green on the final commit |
+
+## 5. Acceptance criteria
+
+Observable on this machine with the shared stack up (`yarn infra:up`); the implementation note records each command and its output. Integration tests use a Redis session of 3.9 with a child namespace per test and, where they need PostgreSQL, S2's `postgres_uows`.
+
+- **A1 Settings and launcher validation.**
+  - **a.** `broker_url` is `redis://localhost:6379/1` for the default and for `CELERY_BROKER_URL=` (empty); `redis://u:p@h:6380/3?socket_timeout=2` becomes `redis://u:p@h:6380/1?socket_timeout=2`; an explicit broker URL is kept; an `amqp://` broker URL fails naming `celery_broker_url`; `REDIS_NAMESPACE` accepts `""`, `taskbot_test_1_ab12cd34:` and `taskbot_test_1_ab12cd34:t3:` and refuses `x`, `x:` with an upper-case letter, and three levels. With `TASKBOT_ENV_FILE` naming a temporary file, `BrokerSettings()` reads that file and not the repository `.env`. `create_redis_client` builds a client whose connection keyword arguments are exactly those of 3.5 and whose retry object is the asynchronous `Retry` with 3 retries.
+  - **b.** `WorkerSettings` validates without `TELEGRAM_BOT_TOKEN`. In an environment without `WORKER_ROLE` and with `TASKBOT_ENV_FILE=/dev/null`, `python -m taskbot.entrypoints.worker bogus` and `python -m taskbot.entrypoints.worker` (no role) exit 2 with `Invalid configuration: WORKER_ROLE` on stderr and start no Celery process; with `WORKER_ROLE=notify` in the environment and only `--include x` as arguments, the launcher picks `notify` and passes `--include x` to Celery. `build_worker_argv` returns exactly the two rows of 3.8; `worker_environment` adds `FORKED_BY_MULTIPROCESSING=1` for `darwin` only; a direct `celery -A taskbot.entrypoints.worker worker` on darwin without the variable exits 2 with the macOS line. `.env.example` validates through every new model.
+- **A2 Celery configuration.** A unit test reads `app.conf` of `create_celery_app` and compares every row of the table in 3.3 with the values the S3.2 commit put there; with a namespace, `broker_transport_options["global_keyprefix"]` equals it; without one the key is absent; creating the app against a closed port opens no connection.
+- **A3 Job queue.** On real Redis in a child namespace: `enqueue(TranscriptionJob(voice_job_id=7))` leaves one message in the namespaced `transcription` list whose task name is `transcribe_voice_job` and whose kwargs are `{"voice_job_id": 7}`; `NotificationJob` lands in `notification`; `delay_seconds=5` sets an `eta` header 5 s ahead (±1 s); `delay_seconds=900` sets it 600 s ahead; `-1` raises `ValueError`. Against a closed port, an unroutable address and a server that accepts and never answers (`tests/tcp_proxy.py` frozen), `enqueue` raises `EnqueueError` within the bound computed from the 3.3 settings plus 1 s (the measured times and the bound recorded in the diary); meanwhile a ticker task on the same loop shows no gap longer than 200 ms. The test removes its messages.
+- **A4 Events.** A `TaskCreated` published for user A reaches A's subscriber as exactly `event.model_dump_json()` and is not received by user B's subscriber within 1 s; a different namespace does not receive it either. A unit test with a recording client shows that every key, channel and pattern the publisher, subscriber and ticket store use starts with the namespace. In 100 iterations, an event published right after `subscribe_user_events` returns is received every time. `next(timeout_seconds=0.5)` returns `None` when nothing is published, and an idle subscription read for 7 s (longer than `socket_timeout`) raises nothing. After `CLIENT KILL` of the subscriber's connection, `next` raises `EventStreamGapError`. Through `tests/tcp_proxy.py` frozen mid-stream, `next` raises `EventStreamError` within its timeout plus 3 s. Entering a subscription against a closed port raises `EventStreamError`. Publishing with no subscriber returns normally; publishing against a closed port and against the frozen proxy each raise within 1.5 s, and `publish_events` over three events then logs one line and makes one publish attempt.
+- **A5 Tickets.** `issue` then `consume` returns the issued `TicketClaims` (`user_id`, `token_version`); a second `consume` returns `None`; the key's TTL right after `issue` is between 29 and 30 s; a store with `ttl_seconds=1` returns `None` after 1.5 s; of 50 concurrent `consume` calls exactly one gets the claims; a 65-character or non-ASCII ticket returns `None` without a Redis command; a stored value that is not valid JSON returns `None` and the key is gone; a client fake that answers `None` to `SET … NX` makes `issue` raise `RuntimeError`. `IssueRealtimeTicket` stores the authenticated user's id and version. `ConsumeRealtimeTicket` with fakes: an unknown ticket, a ticket of a deleted user, and a ticket issued at version 1 after the user's version moved to 2 each raise `InvalidTicketError`; a matching version returns the claims. The same rotation case once on PostgreSQL (`postgres_uows`, S2's `IssueDashboardToken`).
+- **A6 Worker runtime on Python 3.14.** Through `running_worker` with the test tasks, each case in its own child namespace:
+  - **a.** `transcribe` and `notify` workers start side by side; `celery -A taskbot.entrypoints.worker inspect ping -d transcribe@<host> --timeout 5` and `-d notify@<host>` exit 0 (with the child namespace's environment) and exit non-zero after the workers stop. Each worker log has the start line with role, queue, node, the broker URL without a password and the namespace; exactly one `TELEGRAM_BOT_TOKEN is not set` line; the "no job handler is registered" line; no `NameError`, no `__wrapped__` and no `Traceback`.
+  - **b.** Two `s3test.sleep` tasks sent to `transcription` and two to `notification` are each run only by the matching worker (pids in the log).
+  - **c.** With `TASKBOT_TEST_REPLACEMENT_INIT_DELAY=6`, SIGKILL of the transcribe pool child (its pid from the task log) during a 3 s `sleep`: a replacement child comes up after its 6 s initializer and runs the task again with `redelivered = True`; over the next 5 s there is no third start; the namespace's queue and unacked structures are empty afterwards. The implementation note shows the same test failing with `worker_proc_alive_timeout = 4`.
+  - **d.** A task sent with `countdown=3` starts no earlier than 3 s after the send. A task sent with `countdown=12`, followed by SIGTERM of the worker at 2 s: the namespace's queue then holds the restored message with its `eta` header; a new worker started at once runs it once, no earlier than 12 s after the send.
+  - **e.** SIGTERM to the main PID of each worker while a 3 s `sleep` runs: the task's end is logged, the worker exits 0 within 15 s, and no process of its group remains; for `notify` the beat schedule files are the child namespace's own and are gone after teardown.
+  - **f.** Two `loop_identity` tasks in one child report the same loop and no pending tasks; `publish` delivers an event to a subscriber in the test; after `soft_limit` records `SoftTimeLimitExceeded`, a `loop_identity` task reports no pending tasks and the same loop.
+- **A7 R-ISO for Redis.**
+  - **a.** After a session that used every adapter, `SCAN MATCH <id>:*` is empty in both databases.
+  - **b.** The liveness test, limited by `ids` to its own sessions, with `now` shifted seven hours ahead: a session whose anchor lives in a child process that is SIGSTOPped keeps all its keys through a sweep; after that child is SIGKILLed the next sweep removes them; two sweeps run together over one dead session both finish without error and leave no key.
+  - **c.** A unit test of the candidate parser: `taskbot_test_x:k`, `taskbot_test_1_ab12cd34` (no colon), `transcription`, `unacked`, `_kombu.binding.transcription` and `events:user:1` are never candidates; `taskbot_test_1_ab12cd34:t2:transcription` names the id `taskbot_test_1_ab12cd34`.
+  - **d.** After the worker tests, `SCAN MATCH <id>:*` is empty in both databases and no beat schedule file of the session remains.
+- **A8 Seed.** The `seed` test (S2's, on a test database) with a recording publisher receives one `task.created` per task and one `auth.revoked`, in that order, after both commits, and `SeedResult.user_id` is the stored user's id; with a publisher that raises, `seed` still returns the token. On the development stack: `docker exec taskbot-redis-1 redis-cli PSUBSCRIBE 'events:user:*'` in one terminal and `yarn --silent dev:seed 1001 "Купить молоко"` in another show one `task.created` and one `auth.revoked` on the channel the seed printed. `REDIS_URL=redis://127.0.0.1:1/0 yarn --silent dev:seed 1002 "Купить хлеб"` prints the token and link, and stderr has one line about the unpublished events.
+- **A9 Developer command.** On the owner's Mac: `yarn dev:worker transcribe --include tests.worker_tasks` and `yarn dev:worker notify --include tests.worker_tasks` start in two terminals, and each start line names its role, queue and node; an `s3test.sleep` task sent to each (the one-line `python -c` that sends it is recorded in the diary) completes; Ctrl-C during a running task lets the task finish and leaves no process of the worker. `yarn dev:worker bogus` prints the A1b error.
+- **A10 Checks.** `yarn verify` is green on the final commit; the mypy override names only `celery`, `kombu`, `billiard` and the task modules and says why; `replay_s3.py` prints rows R3, R4 and the R6 channel rule of section 7.
+
+## 6. Change profile
+
+New behaviour in the asynchronous half. Touches: a new process kind (the worker, with its launcher and per-child runtime, already drawn in umbrella 3.1); a store's new uses (Redis queues, pub/sub, ticket keys); authorization (one-time tickets bound to `token_version`, refused after a rotation or for a deleted user); concurrency (crash redelivery, warm and hard shutdown, countdown across a restart, the ticket race, concurrent sweeps); the shared development stack (R-ISO namespaces and the liveness proof; a development worker on the shared broker); serialized shapes on the wire (job kwargs and event JSON, both from S2 models; no change to them). Earns: the concurrency checks (A3, A5, A6c–e, A7, each on real Redis and a real worker), authorization (A5), the architecture check (no process or store beyond umbrella 3.1; the subscriber is umbrella 3.6's "subscribe" step made into a class), and shared-stack safety (A7, A6a). No money, no on-chain writes, no schema migration, no existing data (the census of Redis databases 0 and 1 found zero keys on 2026-10-24).
+
+## 7. Owner acceptance (D6)
+
+S3 changes nothing the owner sees in the product: there is no bot, worker handler or dashboard yet. The census of stored rows found no data (Redis databases 0 and 1: `DBSIZE` 0 on 2026-10-24; S3 writes no PostgreSQL rows of its own). What the owner can observe are developer commands; the rows below are what each does after S3. Before S3, `yarn dev:worker` fails with "built in stage S3" and `yarn dev:seed` publishes nothing.
+
+| # | Action | Result after S3 | Why |
+|---|---|---|---|
+| R1 | `yarn dev:worker transcribe` | a worker starts; its start line names role `transcribe`, queue `transcription`, node `transcribe@<host>`; a warning says no job handler is registered yet | umbrella 3.1; S5 adds the handlers |
+| R2 | `yarn dev:worker notify` in a second terminal | a second worker starts beside it: queue `notification`, node `notify@<host>`, embedded beat | umbrella 3.1 |
+| R3 | either command without `TELEGRAM_BOT_TOKEN` in `.env` | the worker starts and logs one warning naming the variable | S3-D1 |
+| R4 | `yarn dev:worker bogus`, or `yarn dev:worker` without a role | refused at once: `Invalid configuration: WORKER_ROLE …`, no worker | 3.8 |
+| R5 | Ctrl-C in a worker terminal while a test task runs | the task finishes, then the worker stops (exit status 1, Celery's warm shutdown on Ctrl-C) | 3.11 |
+| R6 | `yarn dev:seed 1001 "Купить молоко"` with `PSUBSCRIBE 'events:user:*'` open | the seed prints `Events channel: events:user:<n>`, where `<n>` is the stored user's id (not 1001); the subscriber shows `task.created` with the task, then `auth.revoked` | 3.11 |
+| R7 | the same seed with Redis unreachable (`REDIS_URL=redis://127.0.0.1:1/0`) | the token and link are printed as before; one logged line says the events were not published | Y16 |
+
+`backend/tests/acceptance/replay_s3.py` is a read-only script that prints R3 (`WorkerSettings` without a token), R4 (the launcher's error for `bogus` and for no role, run as subprocesses with `TASKBOT_ENV_FILE=/dev/null`) and the R6 channel rule (`user_channel("", user_id)` for a constructed event); it starts no worker, opens no Redis or database connection and writes nothing. R1, R2 and R5 are A6 and A9; R6 and R7 are A8. The reviewer runs it on the reviewed commit and compares it with this table.
+
+Owner's acceptance, 2026-10-26, given to this table: "Да" (Russian for "yes").
+
+## 8. Risks
+
+- **Linux is not exercised in S3.** Every worker result above comes from macOS with spawn children; the image uses fork, where a client created in the main process would be inherited. The rule that `worker_init` opens no connection and A1's "creating the app opens no connection" keep that out; S8's Compose run is the Linux check.
+- **A development worker on the shared broker discards other worktrees' jobs.** Until S5 registers the handlers, an S3 `yarn dev:worker` consumes `transcription` or `notification` and drops what it cannot run (an unknown task is acknowledged with one log line, executed). One development worker per role per machine, started from the worktree whose code should handle the jobs; the start line warns about it; the README states the rule. Two development workers of one role also share the node name.
+- **Hard time limits and unknown task names acknowledge the message**, and so does an unhandled exception (executed, by design in umbrella 3.6). Every loss path depends on S5's sweep over `voice_jobs`.
+- **A SIGKILL of a whole worker** leaves its unacknowledged message in Redis until the first restore scan after the visibility timeout (about 3600 s plus up to 100 s) or the next worker start after that timeout (Y3). The sweep (S5) is the repair path.
+- **A SIGKILL of a worker's main process on macOS leaves its pool children running** (Celery's parent-death signal is Linux-only; executed). The test harness kills the process group; the orphan guard of 3.10 covers a killed pytest.
+- **R-ISO's weaker proof** (3.9 item 6, Y12): a dropped anchor can expose a six-hour-old live test session to another session's sweep; harm is limited to that session's test keys.
+- **Pub/sub drops**: an event published during a subscriber's reconnect is lost; `EventStreamGapError` makes S6 close the stream so the dashboard refetches (3.6).
+- **Publishing stays on the request path**: with Redis down, a writer waits up to about 1 s before its reply (3.5, Y16). S4 may reply before publishing; that order is S4's choice.
+
+## 9. Departures from the umbrella text
+
+The umbrella is gate-stamped, so S3 does not edit it. These points supersede its text for S3 and later stages; the lead carries them into the next umbrella amendment.
+
+| # | Umbrella text | Replaced by | Why |
+|---|---|---|---|
+| Y1 | `TELEGRAM_BOT_TOKEN` required by both workers; a missing token is a pre-flight exit (3.1, 3.7) | optional for both roles; one warning at start (S3-D1) | 3.7's last paragraph and S8 promise a reviewer without a token runs everything except `bot`; both texts cannot hold |
+| Y2 | ports table: `EventPublisher` only; the API subscribes (3.4, 3.6) | S3 builds `UserEventSubscription` in infrastructure, with the subscribe confirmation, the idle ping and `EventStreamError`/`EventStreamGapError` (S3-D2) | keeps all Redis code in one stage; three executed traps |
+| Y3 | S3 acceptance: "after a SIGKILL it returns only at the visibility timeout" (5, S3) | at the first restore scan after the visibility timeout (scans run at worker connect and about every 100 s), or at the next worker start after it | `kombu/transport/redis.py:409-413`, executed |
+| Y4 | prefork children assumed forked (3.1: "nothing … is inherited across the fork") | on macOS the launcher sets `FORKED_BY_MULTIPROCESSING=1`, billiard's spawn is kept, and `worker_init` refuses a macOS prefork start without it | without it every task is lost on macOS (executed) |
+| Y5 | Celery settings of 3.1 | plus `worker_proc_alive_timeout = 30`, `broker_connection_retry_on_startup = True`, `broker_connection_timeout`, a bounded publish retry policy, `socket_connect_timeout` and `socket_timeout`; workers run `--without-gossip --without-mingle --without-heartbeat` | replacement-child kill loop, a 75 s or unbounded enqueue hang, start time (executed) |
+| Y6 | R-ISO: "a session prefixes every key, channel, lock and Celery queue" (12; S1 section 6 item 2 names `global_keyprefix` or per-session queue names) | `global_keyprefix` for Celery, plain queue names, child namespaces per test; a new variable `REDIS_NAMESPACE` (empty outside tests) passed to every Redis adapter and to the worker subprocess | per-session queue names alone leave remote control and `unacked` shared: pings cross sessions and a short visibility timeout restores another session's live message (executed) |
+| Y7 | the `worker_init` pre-flight validates settings (3.1) | the launcher validates `WorkerSettings` before exec, and `worker_init` validates again for direct `celery` starts; the start line moves to `worker_ready` | the role and the variable names are reported before Celery starts; a line logged in `worker_init` is dropped (executed) |
+| Y8 | the bot's lock and heartbeat keys are literal names (3.1) | they go through `namespaced(namespace, key)` (S4 uses it) | R-ISO |
+| Y9 | the 3.1 beat schedule path `-s /tmp/celerybeat-schedule` | the system temporary directory, with the namespace in the file name for test sessions | a test worker must not share a development worker's schedule files |
+| Y10 | domain errors of S2 3.2 | plus `InvalidTicketError` | `ConsumeRealtimeTicket` refuses without importing an adapter |
+| Y11 | "every delay the application schedules is a countdown of at most a few minutes" (3.1) | `enqueue` clamps a delay above `MAX_COUNTDOWN_SECONDS` (600 s) to 600 s; negative delays are refused | S2's `LeaseLive` (up to 450 s) and `NotificationNotDue` (an S2 cooldown can be 900 s) re-enqueue with longer waits; the database re-checks after an early delivery |
+| Y12 | R-ISO: a session "proves that no live session owns" what it deletes (12) | for Redis the proof is a connected anchor named with the session id; a dropped anchor can expose a live session older than six hours (3.9 item 6) | Redis has no atomic "delete only if nobody is connected", unlike PostgreSQL's `DROP DATABASE` |
+| Y13 | settings models of 3.7: `BotSettings`, `WorkerSettings`, `ApiSettings` | plus `BrokerSettings` (the Celery app for `-A`) and S3's `WorkerSettings` without extraction fields (S5 adds a transcribe-only model) | `-A` must import without a role; notify never validates extraction (3.1) |
+| Y14 | `redis>=5,<6.5` (4) | `redis>=6.4,<6.5` (the locked 6.4.0 stays) | the client uses `ExponentialWithJitterBackoff`, which the 5.x line may lack |
+| Y15 | settings read the repository `.env` (S1 3.4) | `TASKBOT_ENV_FILE`, when set, names the file instead | a worker subprocess in a test otherwise takes the developer's token and broker from `.env` (executed) |
+| Y16 | "a failed publish is logged, never raised" (3.4; S2 3.6 `publish_events`) | still never raised; `publish_events` stops a batch at the first failure and logs one line with the number of skipped events | each failed publish costs up to 1 s; a ten-task message would wait about ten seconds |
+| Y17 | S2 3.8: the seed's events go to one call site where S3 binds the publisher | `SeedPorts.publisher`, the publish inside `seed`, `SeedResult.user_id`, and the printed channel | testable through S2's `seed` test; the owner needs the channel, which is the internal user id |
+
+## 10. Pre-handoff review record
+
+Five lenses ran on round 1 on 2026-10-24 on `claude-sonnet-5-5`: coherence; premise verification in three groups (Celery, kombu and billiard; redis-py and Redis; the repository and S2), each executed against the installed libraries and Redis database 9 with its own prefix, cleaned afterwards; adversarial (effort `xhigh`). Artifacts: `.tasks/artifacts/2026-10-24-s3/lens-{coherence,premise-celery,premise-redis,premise-repo,adversarial}.md` (local). Every finding was folded in; none was rejected outright.
+
+- **HIGH (adversarial, confirmed): the D6 row and A8 subscribed to `events:user:1001`, the Telegram id, while events are published on the internal `users.id`.** → The seed prints its channel, A8 and R6 use `PSUBSCRIBE 'events:user:*'`, `SeedResult.user_id`, and the replay prints the channel rule (3.11, A8, R6, Y17).
+- Bounded Redis calls (MED, executed by two lenses): `send_task` blocked forever on a silent server; the default executor was starved; publishes cost 2–5 s each. → `socket_timeout` and `broker_connection_timeout` in 3.3, a dedicated enqueue executor, a 1 s publish timeout, stop-at-first-failure (Y16), silent-server cases in A3 and A4.
+- Subscriber contract (MED, executed): a half-open link looked like silence; reconnect failures leaked raw redis errors; early `None`; a hidden reconnect with no timeout. → The idle ping, `EventStreamError` as the only exit, finite reads looping to the deadline, the frozen-proxy and closed-port cases (3.6, A4).
+- Worker start (MED, executed): the start line in `worker_init` was dropped; a direct `celery` start on macOS lost every task; `@app.task` failed mypy strict. → `worker_ready` start line, the macOS refusal in `worker_init`, the decorator override (3.3, 3.8, Y7, Y4).
+- Tests that proved nothing or leaked (MED): A6c passed with the default timeout; A6d could pass without the restored ETA; test order through leftover messages; `.env` leaking into worker subprocesses; empty `SCAN` proving nothing when an adapter forgot the namespace. → The replacement-initializer delay and its red run; a 12 s countdown with the restored message checked; child namespaces; `TASKBOT_ENV_FILE` (Y15); a recording-client namespace test (3.9, 3.10, A4, A6, A7).
+- Coherence and premises (MED/LOW): step "Done when" columns; the beat file's owner and its SQLite side files; the role source and argument parsing; `WorkerSettings` with extraction fields for notify; R-ISO's weaker proof without a departure row; the countdown cap against S2's longer waits (now a clamp, Y11); `uows: UnitOfWorkFactory`; the deleted-user and `NX` cases; the asynchronous `Retry` class and its import paths; `SET NX` returning `None`; `WRONGTYPE`; Ctrl-C's exit status 1; the 0.1 s budget after a hard limit; the unpickled app in a spawn child; the redis pin; the S1 status note and the `backend/AGENTS.md` sentence; S2's tip and its `postgres_uows` fixture; the D1 options and the D4 approaches in section 2; one development worker per role (3.x, A1–A10, section 8, Y11–Y17).
