@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
+import warnings
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Literal
 
 from anthropic import APIError, APITimeoutError
@@ -42,6 +45,8 @@ def quiet_sdk_loggers() -> None:
     # The SDK applies ANTHROPIC_LOG while importing; call this afterwards.
     logging.getLogger("anthropic").setLevel(logging.WARNING)
     logging.getLogger("httpx2").setLevel(logging.WARNING)
+    # SDK serialization warnings can include response content outside its loggers.
+    warnings.filterwarnings("ignore", message="Pydantic serializer warnings", category=UserWarning)
 
 
 class _FallbackRequiredError(Exception):
@@ -63,19 +68,29 @@ def _task_from_response(response: ParsedMessage[TaskDraft]) -> TaskDraft:
     return task
 
 
-def _raise_interrupt(error: BaseException, interrupts: tuple[type[BaseException], ...]) -> None:
-    pending = [error]
+def _exception_chain(error: BaseException | None) -> Iterator[BaseException]:
+    pending = [error] if error is not None else []
     visited: set[int] = set()
     while pending:
         current = pending.pop()
         if id(current) in visited:
             continue
         visited.add(id(current))
-        if isinstance(current, interrupts):
-            raise current
+        yield current
         for linked in (current.__cause__, current.__context__):
             if linked is not None:
                 pending.append(linked)
+
+
+def _raise_interrupt(
+    error: BaseException,
+    interrupts: tuple[type[BaseException], ...],
+    handled_error: BaseException | None,
+) -> None:
+    handled = {id(item) for item in _exception_chain(handled_error)}
+    for current in _exception_chain(error):
+        if id(current) not in handled and isinstance(current, interrupts):
+            raise current
 
 
 def _failure_reason(error: Exception) -> str:
@@ -117,6 +132,7 @@ class ClaudeExtractor:
         self._fallback = HeuristicExtractor(degraded=True)
 
     async def extract(self, text: MessageText) -> Extraction:
+        handled_error = sys.exception()
         started = time.perf_counter()
         try:
             async with asyncio.timeout(self._deadline_seconds):
@@ -145,7 +161,7 @@ class ClaudeExtractor:
                     degraded=False,
                 )
         except Exception as error:
-            _raise_interrupt(error, self._interrupts)
+            _raise_interrupt(error, self._interrupts, handled_error)
             reason = _failure_reason(error)
             logger.warning("claude extraction fallback: %s", reason, extra={"reason": reason})
             return await self._fallback.extract(text)

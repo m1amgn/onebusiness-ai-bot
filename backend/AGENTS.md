@@ -30,6 +30,11 @@ interrupts=(SoftTimeLimitExceeded,) so worker interruption propagates even when
 the SDK wraps it. Task cancellation always propagates. Requests disable SDK retries
 and pin the Anthropic base URL. Logs contain safe reason codes, usage and latency;
 keep anthropic and httpx2 loggers at WARNING after SDK import to protect chat text.
+The owned HTTP client refuses redirects, so a response cannot forward source text
+to another host. Suppress Pydantic serializer UserWarnings process-wide after SDK
+import; those warnings can include response content outside the SDK loggers.
+Interrupt propagation excludes exceptions already handled by the caller before
+extract starts, while preserving exception chains created inside the current call.
 
 The English system rules and four synthetic examples live in extraction/prompt.py.
 Keep the prompt at least 2600 characters for the cache prefix. Check prompt changes
@@ -38,6 +43,8 @@ Run it from root with yarn live:extraction --thinking disabled|adaptive, one mod
 per process. It makes eight paid calls, checks fixed A1-A8 facts and cache hits,
 and prints usage/latency. Gist and added facts need manual review. Normal verify
 only runs its offline checker/configuration tests and never calls the provider.
+Fact checks examine title and description separately, retain accepted word-stem
+suffixes and reject numeric supersets with the replay's token-boundary rules.
 
 Test service doubles live in tests/fakes. The read-only owner-row replay is
 `uv run --locked --directory backend python tests/acceptance/replay_s2.py` from root.

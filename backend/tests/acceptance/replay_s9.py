@@ -87,8 +87,13 @@ def load_rows() -> tuple[AcceptanceRow, ...]:
     return rows
 
 
-def compact(value: str) -> str:
-    return "".join(value.casefold().split())
+def contains_fact(value: str, fact: str) -> bool:
+    normalized_fact = "".join(fact.casefold().split())
+    pattern = r"\s*".join(re.escape(character) for character in normalized_fact)
+    # Alphabetic markers can be stems; numeric endings must not match longer numbers.
+    suffix = r"(?!\d)" if normalized_fact[-1:].isdigit() else ""
+    # [^\W_] matches Unicode letters/digits without treating an underscore as a letter.
+    return re.search(rf"(?<![^\W_]){pattern}{suffix}", value.casefold()) is not None
 
 
 def check_row(row: AcceptanceRow, result: RowResult, *, index: int) -> list[str]:
@@ -97,8 +102,11 @@ def check_row(row: AcceptanceRow, result: RowResult, *, index: int) -> list[str]
             return []
         return [f"degraded:{result.reason or 'unknown'}"]
     task = result.extraction.task
-    combined = compact(task.title + "\n" + task.description)
-    errors = [f"must_keep:{fact}" for fact in row.must_keep if compact(fact) not in combined]
+    errors = [
+        f"must_keep:{fact}"
+        for fact in row.must_keep
+        if not any(contains_fact(value, fact) for value in (task.title, task.description))
+    ]
     errors.extend(
         f"forbidden_words:{word}"
         for word in row.forbidden_words

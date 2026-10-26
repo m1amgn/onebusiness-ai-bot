@@ -57,6 +57,7 @@ async def open_extractor(
         base_url="https://api.anthropic.com",
         max_retries=0,
         timeout=deadline_seconds,
+        http_client=anthropic.DefaultAsyncHttpxClient(follow_redirects=False),
     ) as client:
         yield ClaudeExtractor(
             client,

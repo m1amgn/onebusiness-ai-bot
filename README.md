@@ -135,8 +135,18 @@ excluding process and SDK startup.
 |---|---|---|---|---|
 | Initial / disabled | 2.350 / 1.809 s | $0.000986890 | $0.123361 | A1–A7 pass; A8 changes uncertainty and an approximate date |
 | Initial / adaptive | 2.660 / 1.842 s | $0.001067085 | $0.133386 | A1–A7 pass; A8 has the same defects |
-| First correction / disabled | 1.810 / 1.511 s | $0.001031065 | $0.128883 | A1–A7 pass; strengthened A8 checks reject both defects |
+| First correction / disabled | 1.810 / 1.511 s | $0.001031065 | $0.128883 | A1–A7 pass; A8 fails both strengthened checks (exit 1) |
 | Final / disabled, warm cache | 1.518 / 1.150 s | $0.000940540 | $0.117568 | A1–A8 pass the strengthened checks and manual reading |
+
+Token counts below are totals across eight messages per run. Divide each total by
+eight for mean tokens per message. The input column excludes cache writes and reads.
+
+| Prompt / thinking | Input tokens | Output tokens | Cache-write tokens | Cache-read tokens |
+|---|---|---|---|---|
+| Initial / disabled | 1,355 | 1,039 | 1,702 | 11,914 |
+| Initial / adaptive | 1,355 | 1,199 | 1,703 | 11,921 |
+| First correction / disabled | 1,355 | 1,063 | 1,867 | 13,069 |
+| Final / disabled, warm cache | 1,355 | 1,212 | 0 | 19,904 |
 
 The initial comparison supports keeping thinking `disabled`: adaptive used more
 output tokens and had higher mean latency without fixing A8. These small samples
@@ -147,6 +157,10 @@ dates and context; manual review confirmed all eight final rows. A speaker's
 own correction can remain as a clarification when its meaning is preserved.
 Adaptive has not been tested with this final prompt. The 36 recorded calls,
 including failed attempts and probes, cost $0.007439830 in total.
+
+The prompt examples were refined after the A8 failures. They use different text
+but share A8's uncertainty, approximate-reminder and self-correction patterns.
+The final A8 pass therefore provides less evidence of generalisation than A1–A7.
 
 Costs use the [Haiku 5.5 rates](https://platform.claude.com/docs/en/models/haiku-5-5/overview)
 and [prompt-cache pricing](https://platform.claude.com/docs/en/about-claude/pricing)

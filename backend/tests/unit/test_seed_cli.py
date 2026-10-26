@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from taskbot.entrypoints.seed import SeedPorts, SeedResult
+from taskbot.domain.ports.messaging import EventPublisher
+from taskbot.domain.ports.persistence import UnitOfWorkFactory
+from taskbot.domain.ports.services import TaskExtractor
+from taskbot.entrypoints.seed import SeedPorts, SeedResult, build_seed_ports
 from taskbot.entrypoints.seed import __main__ as seed_cli
 from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
 from taskbot.infrastructure.settings.seed import SeedSettings
@@ -20,6 +23,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 class CliResources:
     closed: list[str] = field(default_factory=list)
     fail_close: bool = False
+    extractor: HeuristicExtractor = field(default_factory=HeuristicExtractor)
 
     async def aclose(self) -> None:
         self.closed.append("redis")
@@ -47,7 +51,7 @@ def resources(monkeypatch: pytest.MonkeyPatch) -> CliResources:
     ) -> AsyncIterator[HeuristicExtractor]:
         assert deadline_seconds == 30
         try:
-            yield HeuristicExtractor()
+            yield owned.extractor
         finally:
             owned.closed.append("extractor")
 
@@ -68,6 +72,28 @@ async def successful_seed(
         duplicate=False,
         events=(),
     )
+
+
+async def test_seed_cli_passes_the_opened_extractor_to_port_construction(
+    resources: CliResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[TaskExtractor] = []
+
+    def capture_build_seed_ports(
+        settings: SeedSettings,
+        uows: UnitOfWorkFactory,
+        extractor: TaskExtractor,
+        *,
+        publisher: EventPublisher,
+    ) -> SeedPorts:
+        observed.append(extractor)
+        return build_seed_ports(settings, uows, extractor, publisher=publisher)
+
+    monkeypatch.setattr(seed_cli, "build_seed_ports", capture_build_seed_ports)
+    monkeypatch.setattr(seed_cli, "seed", successful_seed)
+    await seed_cli.run(1001, "Synthetic task")
+    assert len(observed) == 1
+    assert observed[0] is resources.extractor
 
 
 async def test_seed_cli_prints_namespaced_internal_user_channel_and_closes_resources(

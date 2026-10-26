@@ -52,11 +52,69 @@ def test_replay_loads_the_frozen_owner_rows() -> None:
     assert len(rows[-1].must_keep) == 16
 
 
+def test_replay_refuses_a_modified_copy_of_the_frozen_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    changed_rows = tmp_path / "s9_rows.json"
+    changed_rows.write_bytes(replay_s9.ROWS_PATH.read_bytes() + b"\n")
+    monkeypatch.setattr(replay_s9, "ROWS_PATH", changed_rows)
+
+    with pytest.raises(ValueError, match="differs from the owner-accepted SHA-256"):
+        replay_s9.load_rows()
+
+
 def test_fact_check_ignores_case_and_whitespace_but_reports_a_missing_fact() -> None:
     row = replay_s9.AcceptanceRow(
         id="A6", text="Synthetic", must_keep=("3  MARCH", "ab-\n12345", "missing fact")
     )
     assert replay_s9.check_row(row, outcome(), index=1) == ["must_keep:missing fact"]
+
+
+@pytest.mark.parametrize(
+    ("fact", "description"),
+    [
+        ("3 ноября", "13 ноября"),
+        ("305", "1305"),
+        ("45000", "145000"),
+        ("48", "148"),
+        ("48", "480"),
+        ("12500", "125000"),
+        ("AB-12345", "AB-123456"),
+        ("305", "x305"),
+        ("Белов", "Небелов"),
+    ],
+)
+def test_fact_check_rejects_numeric_supersets_and_letter_prefixes(
+    fact: str, description: str
+) -> None:
+    row = replay_s9.AcceptanceRow(id="A8", text="Synthetic", must_keep=(fact,))
+    assert replay_s9.check_row(row, outcome(description=description), index=0) == [
+        f"must_keep:{fact}"
+    ]
+
+
+def test_fact_cannot_span_the_title_description_boundary() -> None:
+    row = replay_s9.AcceptanceRow(id="A8", text="Synthetic", must_keep=("3 ноября",))
+    result = outcome(title="Reminder on 3", description="ноября")
+    assert replay_s9.check_row(row, result, index=0) == ["must_keep:3 ноября"]
+
+
+@pytest.mark.parametrize(
+    ("fact", "description"),
+    [
+        ("понедельник", "До понедельника"),
+        ("прогноз", "По прогнозу"),
+        ("Белов", "Позвонить Белову"),
+        ("Садов", "На Садовой"),
+        ("AB-12345", "policy: AB- 12\t345."),
+        ("305", "Room 305"),
+    ],
+)
+def test_fact_check_preserves_real_word_edges_and_accepts_alphabetic_suffixes(
+    fact: str, description: str
+) -> None:
+    row = replay_s9.AcceptanceRow(id="A8", text="Synthetic", must_keep=(fact,))
+    assert replay_s9.check_row(row, outcome(description=description), index=0) == []
 
 
 @pytest.mark.parametrize(

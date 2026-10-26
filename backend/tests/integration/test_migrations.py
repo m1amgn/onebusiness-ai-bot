@@ -162,3 +162,31 @@ async def test_two_migrators_serialize_on_an_empty_database() -> None:
         finally:
             await connection.close()
     assert await development_schema() == before
+
+
+async def test_description_limit_downgrade_restores_2000_then_upgrade_restores_4096() -> None:
+    before = await development_schema()
+    async with database_context() as url:
+        config = make_alembic_config(url)
+        await asyncio.to_thread(command.upgrade, config, "head")
+        connection = await asyncpg.connect(raw_url(url))
+        try:
+            await asyncio.to_thread(command.downgrade, config, "0001")
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0001"
+            definition = await connection.fetchval("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                WHERE conname='ck_tasks_description_length'
+                    AND conrelid='public.tasks'::regclass
+            """)
+            assert normalize_sql(definition) == "CHECKchar_lengthdescription<=2000"
+            await asyncio.to_thread(command.upgrade, config, "head")
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0002"
+            definition = await connection.fetchval("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                WHERE conname='ck_tasks_description_length'
+                    AND conrelid='public.tasks'::regclass
+            """)
+            assert normalize_sql(definition) == "CHECKchar_lengthdescription<=4096"
+        finally:
+            await connection.close()
+    assert await development_schema() == before

@@ -5,6 +5,7 @@ import json
 import logging
 import sys
 import time
+import warnings
 from collections.abc import Callable, Coroutine
 from contextlib import nullcontext
 from pathlib import Path
@@ -67,6 +68,18 @@ def client_for(handler: Handler) -> AsyncAnthropic:
         timeout=1,
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
+
+
+def patch_factory_transport(monkeypatch: pytest.MonkeyPatch, handler: Handler) -> None:
+    async def send(
+        _transport: httpx2.AsyncHTTPTransport, request: httpx2.Request
+    ) -> httpx2.Response:
+        response = handler(request)
+        if isinstance(response, httpx2.Response):
+            return response
+        return await response
+
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", send)
 
 
 def extractor_for(
@@ -290,7 +303,7 @@ async def test_cancellation_propagates() -> None:
 
 
 @pytest.mark.parametrize("propagate", [True, False])
-async def test_wrapped_interrupt_policy(propagate: bool) -> None:
+async def test_wrapped_interrupt_policy(propagate: bool, caplog: pytest.LogCaptureFixture) -> None:
     class InterruptError(Exception):
         pass
 
@@ -307,6 +320,75 @@ async def test_wrapped_interrupt_policy(propagate: bool) -> None:
             assert await extractor.extract(text) == await HeuristicExtractor(degraded=True).extract(
                 text
             )
+            record = next(record for record in caplog.records if record.name == LOGGER)
+            assert record.__dict__["reason"] == "api:APIConnectionError"
+
+
+async def test_interrupt_linked_only_through_context_inside_the_call_propagates() -> None:
+    class InterruptError(Exception):
+        pass
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        try:
+            raise InterruptError("inside the current call")
+        except InterruptError:
+            raise httpx2.ConnectError("synthetic", request=request) from None
+
+    async with client_for(handle) as client:
+        with pytest.raises(InterruptError, match="inside the current call"):
+            await extractor_for(client, interrupts=(InterruptError,)).extract(
+                MessageText.parse("Keep text")
+            )
+
+
+@pytest.mark.parametrize("nested", [False, True])
+async def test_callers_handled_interrupt_is_not_rethrown_for_a_new_network_failure(
+    nested: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    class InterruptError(Exception):
+        pass
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("synthetic", request=request)
+
+    error: Exception = InterruptError("already handled by the caller")
+    if nested:
+        outer = RuntimeError("already handled wrapper")
+        outer.__cause__ = error
+        error = outer
+    text = MessageText.parse("Keep text")
+    async with client_for(handle) as client:
+        try:
+            raise error
+        except InterruptError, RuntimeError:
+            result = await extractor_for(client, interrupts=(InterruptError,)).extract(text)
+    assert result == await HeuristicExtractor(degraded=True).extract(text)
+    records = [record for record in caplog.records if record.name == LOGGER]
+    assert len(records) == 1
+    assert records[0].__dict__["reason"] == "api:APIConnectionError"
+
+
+async def test_unknown_response_blocks_do_not_leak_through_serializer_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    body = message_body()
+    body["content"] = [
+        {"type": "text", "text": '{"title":"Book a meeting"}'},
+        {"type": "future_block", "data": "LEAK42"},
+    ]
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        async with client_for(lambda request: httpx2.Response(200, json=body)) as client:
+            result = await extractor_for(client).extract(MessageText.parse("PRIVATE_INPUT_MARKER"))
+        warnings.warn("unrelated warning remains visible", UserWarning, stacklevel=1)
+    assert not result.degraded
+    assert "unrelated warning remains visible" in {str(item.message) for item in captured}
+    assert all("LEAK42" not in str(item.message) for item in captured)
+    assert not any(
+        str(item.message).startswith("Pydantic serializer warnings") for item in captured
+    )
+    assert "LEAK42" not in caplog.text
+    assert "PRIVATE_INPUT_MARKER" not in caplog.text
 
 
 @pytest.mark.parametrize("invalid", [False, True])
@@ -331,7 +413,7 @@ async def test_factory_builds_and_closes_the_real_client(
 ) -> None:
     import anthropic
 
-    from taskbot.infrastructure.extraction.claude import DEFAULT_THINKING, ClaudeExtractor
+    from taskbot.infrastructure.extraction.claude import ClaudeExtractor
     from taskbot.infrastructure.extraction.factory import open_extractor
 
     original = anthropic.AsyncAnthropic
@@ -345,7 +427,14 @@ async def test_factory_builds_and_closes_the_real_client(
             raise RuntimeError("caller")
         return reply()
 
-    def create(*, api_key: str, base_url: str, max_retries: int, timeout: float) -> AsyncAnthropic:
+    def create(
+        *,
+        api_key: str,
+        base_url: str,
+        max_retries: int,
+        timeout: float,
+        http_client: httpx2.AsyncClient | None = None,
+    ) -> AsyncAnthropic:
         options.append(
             {"key": api_key, "base_url": base_url, "retries": max_retries, "timeout": timeout}
         )
@@ -354,14 +443,21 @@ async def test_factory_builds_and_closes_the_real_client(
             base_url=base_url,
             max_retries=max_retries,
             timeout=timeout,
-            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)),
+            http_client=http_client,
         )
         clients.append(client)
         return client
 
     monkeypatch.setattr(anthropic, "AsyncAnthropic", create)
+    patch_factory_transport(monkeypatch, handle)
+    for name in ("anthropic", "httpx2"):
+        monkeypatch.setattr(logging.getLogger(name), "level", logging.NOTSET)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://invalid.example")
-    settings = ExtractorSettingsMixin(task_extractor="claude", anthropic_api_key=SecretStr("test"))
+    settings = ExtractorSettingsMixin(
+        task_extractor="claude",
+        anthropic_api_key=SecretStr("test"),
+        anthropic_model="synthetic-configured-model",
+    )
     with pytest.raises(RuntimeError, match="caller") if fail else nullcontext():
         async with open_extractor(
             settings, deadline_seconds=8, thinking=thinking, interrupts=(RuntimeError,)
@@ -370,12 +466,73 @@ async def test_factory_builds_and_closes_the_real_client(
             assert not (await extractor.extract(MessageText.parse("Book a meeting"))).degraded
     assert len(clients) == 1
     assert clients[0].is_closed()
+    assert clients[0]._client.follow_redirects is False
     assert options == [
         {"key": "test", "base_url": "https://api.anthropic.com", "retries": 0, "timeout": 8}
     ]
-    assert requests[0]["thinking"] == {"type": thinking or DEFAULT_THINKING}
+    assert requests[0]["model"] == "synthetic-configured-model"
+    assert requests[0]["thinking"] == {"type": thinking or "disabled"}
     assert logging.getLogger("anthropic").level == logging.WARNING
     assert logging.getLogger("httpx2").level == logging.WARNING
+
+
+def test_default_thinking_is_disabled() -> None:
+    from taskbot.infrastructure.extraction.claude import DEFAULT_THINKING
+
+    assert DEFAULT_THINKING == "disabled"
+
+
+async def test_factory_adapter_owns_the_whole_call_deadline(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from taskbot.infrastructure.extraction.factory import open_extractor
+
+    calls = 0
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(5)
+        return reply()
+
+    patch_factory_transport(monkeypatch, handle)
+    settings = ExtractorSettingsMixin(task_extractor="claude", anthropic_api_key=SecretStr("test"))
+    text = MessageText.parse("Keep text")
+    async with open_extractor(settings, deadline_seconds=0.05) as extractor:
+        started = time.monotonic()
+        result = await extractor.extract(text)
+        elapsed = time.monotonic() - started
+    assert result == await HeuristicExtractor(degraded=True).extract(text)
+    assert calls == 1
+    assert elapsed < 1
+    record = next(record for record in caplog.records if record.name == LOGGER)
+    assert record.__dict__["reason"] == "timeout"
+
+
+@pytest.mark.parametrize("status", [307, 308])
+async def test_factory_does_not_forward_a_message_to_a_redirected_host(
+    status: int, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from taskbot.infrastructure.extraction.factory import open_extractor
+
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if request.url.host == "api.anthropic.com":
+            return httpx2.Response(status, headers={"location": "https://other.invalid/collect"})
+        return reply()
+
+    patch_factory_transport(monkeypatch, handle)
+    settings = ExtractorSettingsMixin(task_extractor="claude", anthropic_api_key=SecretStr("test"))
+    text = MessageText.parse("Private source text stays at the configured host")
+    async with open_extractor(settings, deadline_seconds=8) as extractor:
+        result = await extractor.extract(text)
+    assert result == await HeuristicExtractor(degraded=True).extract(text)
+    assert len(requests) == 1
+    assert requests[0].url.host == "api.anthropic.com"
+    record = next(record for record in caplog.records if record.name == LOGGER)
+    assert record.__dict__["reason"] == "api:APIStatusError"
 
 
 @pytest.mark.parametrize("key", [None, "", " \t "])
