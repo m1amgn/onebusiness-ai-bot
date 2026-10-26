@@ -58,6 +58,7 @@ async def test_keeper_renews_during_delayed_startup_then_reports_lost_key(
     redis_session: RedisSession,
 ) -> None:
     async with create_redis_client(redis_session.redis_url) as client:
+        await client.ping()
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.3, call_timeout=0.05)
         assert await lock.acquire()
         keeper = LockKeeper(lock, renew_seconds=0.03, stop_after_seconds=0.12)
@@ -81,6 +82,7 @@ async def test_heartbeat_starts_only_after_poll_health_and_cannot_block_renewal(
     redis_session: RedisSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with create_redis_client(redis_session.redis_url) as client:
+        await client.ping()
         lock = PollingLock(client, redis_session.child(), ttl_seconds=0.25, call_timeout=0.1)
         assert await lock.acquire()
         keeper = LockKeeper(lock, renew_seconds=0.03, stop_after_seconds=0.12)
@@ -139,6 +141,7 @@ async def test_ambiguous_acquire_is_released_by_owner_token(
     redis_session: RedisSession, monkeypatch: pytest.MonkeyPatch, interruption: type[BaseException]
 ) -> None:
     async with create_redis_client(redis_session.redis_url) as client:
+        await client.ping()
         lock = PollingLock(client, redis_session.child())
         original = lock._lock.acquire
 
