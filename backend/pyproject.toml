@@ -64,6 +64,12 @@ strict = true
 plugins = ["pydantic.mypy"]
 files = ["src", "tests", "alembic"]
 
+# These SDK entry modules ship no typing marker. Keep the exception at their boundary;
+# strict checks still apply to the adapters and domain ports that wrap them.
+[[tool.mypy.overrides]]
+module = ["celery", "kombu.exceptions"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_typed = true
 init_forbid_extra = true

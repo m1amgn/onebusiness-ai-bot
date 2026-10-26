@@ -133,3 +133,15 @@ Events received during the idle PING remain deliverable. S6 owns SSE and revocat
 RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
 TASKBOT_ENV_FILE overrides the root dotenv file at settings construction; explicit
 _env_file=None still disables dotenv loading for in-process tests.
+
+## Celery producer
+
+create_celery_app builds connection-free shared configuration and routes from the
+domain job classes. CeleryJobQueue serializes those models as JSON and publishes on
+its dedicated four-thread executor. It resolves producer_pool before threaded use.
+Negative countdowns are refused; countdowns above 600 seconds are clamped and logged
+at debug. OperationalError becomes EnqueueError with its cause preserved.
+Call the queue's synchronous close() before child shutdown closes loop-owned clients;
+it waits for running sends and cancels executor work that has not started. Cancellation
+of an enqueue awaiter does not stop an already-running broker operation. Broker socket
+timeouts and bounded retries limit those operations; queued sends add executor batches.
