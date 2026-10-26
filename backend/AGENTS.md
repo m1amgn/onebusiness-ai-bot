@@ -122,6 +122,18 @@ deletion. No test assumes exclusive use. S1's tests only read.
 
 ## API schema and image
 
+The API factory registers routes without reading environment variables. Production
+lifespan validates ApiSettings and owns its SQL engine and Redis client. Injected
+ApiServices attach immediately, so ASGITransport tests need no lifespan runner.
+Every task/ticket route authenticates a bearer token; /health is public and
+/api/events authenticates a single-use ticket. Subscribe and recheck the database
+before stream headers. The request-scoped dependency owns subscription cleanup.
+SSE data carries the domain envelope with no event field; comments keep it alive.
+Task pages use opaque cursors and an optional status filter. Publish status events
+only after the use case commits. Keep the dev server's graceful shutdown timeout
+so open streams cannot block reload or Ctrl-C.
+
+
 Change Pydantic response models, then run root `yarn api:schema`; generated
 TypeScript and Zod files are never edited by hand. `yarn api:check` detects drift.
 Route names become OpenAPI operation ids; choose unique names.

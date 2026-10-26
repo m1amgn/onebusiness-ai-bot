@@ -5,6 +5,26 @@ export type ClientOptions = {
 };
 
 /**
+ * AuthRevoked
+ */
+export type AuthRevoked = {
+  /**
+   * Type
+   */
+  type: 'auth.revoked';
+};
+
+/**
+ * HTTPValidationError
+ */
+export type HttpValidationError = {
+  /**
+   * Detail
+   */
+  detail?: Array<ValidationError>;
+};
+
+/**
  * Health
  */
 export type Health = {
@@ -13,6 +33,281 @@ export type Health = {
    */
   status: 'ok';
 };
+
+/**
+ * RealtimeTicket
+ */
+export type RealtimeTicket = {
+  /**
+   * Expires In
+   */
+  expires_in: number;
+  /**
+   * Ticket
+   */
+  ticket: string;
+};
+
+/**
+ * ServerEvent
+ */
+export type ServerEvent =
+  | ({
+      type: 'task.created';
+    } & TaskCreated)
+  | ({
+      type: 'task.updated';
+    } & TaskUpdated)
+  | ({
+      type: 'task.deleted';
+    } & TaskDeleted)
+  | ({
+      type: 'auth.revoked';
+    } & AuthRevoked);
+
+/**
+ * TaskCreated
+ */
+export type TaskCreated = {
+  task: TaskView;
+  /**
+   * Type
+   */
+  type: 'task.created';
+};
+
+/**
+ * TaskDeleted
+ */
+export type TaskDeleted = {
+  /**
+   * Task Id
+   */
+  task_id: number;
+  /**
+   * Type
+   */
+  type: 'task.deleted';
+};
+
+/**
+ * TaskPage
+ */
+export type TaskPage = {
+  /**
+   * Items
+   */
+  items: Array<TaskView>;
+  /**
+   * Next Cursor
+   */
+  next_cursor: string | null;
+};
+
+/**
+ * TaskStatus
+ */
+export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+
+/**
+ * TaskStatusChange
+ */
+export type TaskStatusChange = {
+  status: TaskStatus;
+};
+
+/**
+ * TaskUpdated
+ */
+export type TaskUpdated = {
+  task: TaskView;
+  /**
+   * Type
+   */
+  type: 'task.updated';
+};
+
+/**
+ * TaskView
+ */
+export type TaskView = {
+  /**
+   * Created At
+   */
+  created_at: string;
+  /**
+   * Description
+   */
+  description: string;
+  /**
+   * Id
+   */
+  id: number;
+  /**
+   * Inbound Message Id
+   */
+  inbound_message_id: number;
+  /**
+   * Position
+   */
+  position: number;
+  /**
+   * Source Text
+   */
+  source_text: string;
+  status: TaskStatus;
+  /**
+   * Title
+   */
+  title: string;
+  /**
+   * Updated At
+   */
+  updated_at: string;
+};
+
+/**
+ * ValidationError
+ */
+export type ValidationError = {
+  /**
+   * Context
+   */
+  ctx?: {
+    [key: string]: unknown;
+  };
+  /**
+   * Input
+   */
+  input?: unknown;
+  /**
+   * Location
+   */
+  loc: Array<string | number>;
+  /**
+   * Message
+   */
+  msg: string;
+  /**
+   * Error Type
+   */
+  type: string;
+};
+
+export type EventsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Ticket
+     */
+    ticket?: string | null;
+  };
+  url: '/api/events';
+};
+
+export type EventsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type EventsError = EventsErrors[keyof EventsErrors];
+
+export type EventsResponses = {
+  /**
+   * Successful Response
+   */
+  200: ServerEvent;
+};
+
+export type EventsResponse = EventsResponses[keyof EventsResponses];
+
+export type IssueRealtimeTicketData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: '/api/realtime/tickets';
+};
+
+export type IssueRealtimeTicketResponses = {
+  /**
+   * Successful Response
+   */
+  201: RealtimeTicket;
+};
+
+export type IssueRealtimeTicketResponse =
+  IssueRealtimeTicketResponses[keyof IssueRealtimeTicketResponses];
+
+export type ListTasksData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Cursor
+     */
+    cursor?: string | null;
+    /**
+     * Status
+     */
+    status?: TaskStatus | null;
+  };
+  url: '/api/tasks';
+};
+
+export type ListTasksErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListTasksError = ListTasksErrors[keyof ListTasksErrors];
+
+export type ListTasksResponses = {
+  /**
+   * Successful Response
+   */
+  200: TaskPage;
+};
+
+export type ListTasksResponse = ListTasksResponses[keyof ListTasksResponses];
+
+export type ChangeTaskStatusData = {
+  body: TaskStatusChange;
+  path: {
+    /**
+     * Task Id
+     */
+    task_id: number;
+  };
+  query?: never;
+  url: '/api/tasks/{task_id}';
+};
+
+export type ChangeTaskStatusErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ChangeTaskStatusError = ChangeTaskStatusErrors[keyof ChangeTaskStatusErrors];
+
+export type ChangeTaskStatusResponses = {
+  /**
+   * Successful Response
+   */
+  200: TaskView;
+};
+
+export type ChangeTaskStatusResponse = ChangeTaskStatusResponses[keyof ChangeTaskStatusResponses];
 
 export type HealthData = {
   body?: never;

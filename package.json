@@ -21,7 +21,7 @@
     "api:check": "node scripts/check-api-schema.mjs",
     "infra:up": "node scripts/infra.mjs up",
     "infra:stop": "node scripts/infra.mjs stop",
-    "dev:api": "uv run --locked --directory backend uvicorn --factory taskbot.entrypoints.api.app:create_app --reload --port 8000",
+    "dev:api": "uv run --locked --directory backend uvicorn --factory taskbot.entrypoints.api.app:create_app --reload --port 8000 --timeout-graceful-shutdown 2",
     "dev:whisper": "node scripts/dev-whisper.mjs",
     "db:migrate": "uv run --locked --directory backend alembic upgrade head",
     "dev:seed": "uv run --locked --directory backend python -m taskbot.entrypoints.seed",

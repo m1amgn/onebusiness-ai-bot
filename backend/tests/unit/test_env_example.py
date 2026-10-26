@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 
+from taskbot.infrastructure.settings.api import ApiSettings
 from taskbot.infrastructure.settings.migration import MigrationSettings
 from taskbot.infrastructure.settings.seed import SeedSettings
 from taskbot.infrastructure.settings.worker import BrokerSettings, WorkerSettings
@@ -17,6 +18,7 @@ def test_example_environment_validates_and_contains_no_credentials(
     values = dotenv_values(example)
     settings_types = (
         SampleSettings,
+        ApiSettings,
         InfraTestSettings,
         MigrationSettings,
         SeedSettings,
@@ -41,6 +43,7 @@ def test_example_environment_validates_and_contains_no_credentials(
             assert values[key] == "", f"{key} must be empty in the committed example"
     assert SampleSettings(_env_file=example).task_extractor == "heuristic"
     assert InfraTestSettings(_env_file=example).database_url.hosts()[0]["host"] == "localhost"
+    ApiSettings(_env_file=example)
     MigrationSettings(_env_file=example)
     SeedSettings(_env_file=example)
     BrokerSettings(_env_file=example)

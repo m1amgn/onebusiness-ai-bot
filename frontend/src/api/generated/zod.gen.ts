@@ -3,11 +3,149 @@
 import * as z from 'zod';
 
 /**
+ * AuthRevoked
+ */
+export const zAuthRevoked = z.object({
+  type: z.literal('auth.revoked').default('auth.revoked'),
+});
+
+/**
  * Health
  */
 export const zHealth = z.object({
   status: z.literal('ok').default('ok'),
 });
+
+/**
+ * RealtimeTicket
+ */
+export const zRealtimeTicket = z.object({
+  expires_in: z.int(),
+  ticket: z.string(),
+});
+
+/**
+ * TaskDeleted
+ */
+export const zTaskDeleted = z.object({
+  task_id: z.int(),
+  type: z.literal('task.deleted').default('task.deleted'),
+});
+
+/**
+ * TaskStatus
+ */
+export const zTaskStatus = z.enum(['pending', 'in_progress', 'completed']);
+
+/**
+ * TaskStatusChange
+ */
+export const zTaskStatusChange = z.object({
+  status: zTaskStatus,
+});
+
+/**
+ * TaskView
+ */
+export const zTaskView = z.object({
+  created_at: z.iso.datetime(),
+  description: z.string().max(2000),
+  id: z.int(),
+  inbound_message_id: z.int(),
+  position: z.int(),
+  source_text: z.string(),
+  status: zTaskStatus,
+  title: z.string().max(120),
+  updated_at: z.iso.datetime(),
+});
+
+/**
+ * TaskCreated
+ */
+export const zTaskCreated = z.object({
+  task: zTaskView,
+  type: z.literal('task.created').default('task.created'),
+});
+
+/**
+ * TaskPage
+ */
+export const zTaskPage = z.object({
+  items: z.array(zTaskView),
+  next_cursor: z.string().nullable(),
+});
+
+/**
+ * TaskUpdated
+ */
+export const zTaskUpdated = z.object({
+  task: zTaskView,
+  type: z.literal('task.updated').default('task.updated'),
+});
+
+/**
+ * ServerEvent
+ */
+export const zServerEvent = z.discriminatedUnion('type', [
+  zTaskCreated,
+  zTaskUpdated,
+  zTaskDeleted,
+  zAuthRevoked,
+]);
+
+/**
+ * ValidationError
+ */
+export const zValidationError = z.object({
+  ctx: z.record(z.string(), z.unknown()).optional(),
+  input: z.unknown().optional(),
+  loc: z.array(z.union([z.string(), z.int()])),
+  msg: z.string(),
+  type: z.string(),
+});
+
+/**
+ * HTTPValidationError
+ */
+export const zHttpValidationError = z.object({
+  detail: z.array(zValidationError).optional(),
+});
+
+export const zEventsQuery = z.object({
+  ticket: z.string().nullish(),
+});
+
+/**
+ * Successful Response
+ */
+export const zEventsResponse = zServerEvent;
+
+/**
+ * Successful Response
+ */
+export const zIssueRealtimeTicketResponse = zRealtimeTicket;
+
+export const zListTasksQuery = z.object({
+  limit: z.int().gte(1).lte(200).optional().default(50),
+  cursor: z.string().nullish(),
+  status: zTaskStatus.nullish(),
+});
+
+/**
+ * Successful Response
+ */
+export const zListTasksResponse = zTaskPage;
+
+export const zChangeTaskStatusBody = zTaskStatusChange;
+
+export const zChangeTaskStatusPath = z.object({
+  task_id: z.int().gte(1).lte(2147483647),
+});
+
+/**
+ * Successful Response
+ */
+export const zChangeTaskStatusResponse = zTaskView;
 
 /**
  * Successful Response
