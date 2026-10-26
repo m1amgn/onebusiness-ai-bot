@@ -58,3 +58,6 @@ An integration test that writes data creates and drops its own PostgreSQL databa
 It uses unique prefixes for Redis keys, channels, locks and queues. Tests never assume
 exclusive infrastructure and never write to the development database.
 API routes use /api; the dev proxy preserves that prefix. Public health is /health.
+The proxy closes the browser response when its upstream aborts, so EventSource
+reconnects after an API reload or shutdown. scripts/dev-proxy.test.mjs checks this
+behavior with real ephemeral HTTP servers.

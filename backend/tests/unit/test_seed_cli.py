@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from taskbot.domain.errors import DomainError
 from taskbot.domain.ports.messaging import EventPublisher
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.domain.ports.services import TaskExtractor
+from taskbot.entrypoints import seed as seed_entrypoint
 from taskbot.entrypoints.seed import SeedPorts, SeedResult, build_seed_ports
 from taskbot.entrypoints.seed import __main__ as seed_cli
 from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
@@ -204,3 +206,75 @@ async def test_seed_configuration_error_hides_invalid_secret_input() -> None:
     assert "Invalid configuration: DATABASE_URL" in result.stderr
     assert "synthetic-secret" not in result.stderr
     assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+async def test_keep_token_cli_prints_no_credentials_and_closes_resources(
+    resources: CliResources,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    duplicate: bool,
+) -> None:
+    async def successful_keep_token(
+        ports: SeedPorts, telegram_user_id: int, text: str, message_id: int
+    ) -> seed_entrypoint.KeptTokenSeedResult:
+        assert telegram_user_id == 1001
+        assert message_id < 0
+        return seed_entrypoint.KeptTokenSeedResult(
+            user_id=7, titles=() if duplicate else (text,), duplicate=duplicate, events=()
+        )
+
+    monkeypatch.setattr(seed_cli, "seed_keep_token", successful_keep_token, raising=False)
+    await seed_cli.run_keep_token(1001, "Synthetic task")
+    assert resources.closed == ["extractor", "redis", "engine"]
+    output = capsys.readouterr().out
+    assert "Events channel: taskbot_test_1_ab12cd34:t1:events:user:7\n" in output
+    assert "Token unchanged; open dashboards stay signed in.\n" in output
+    assert ("Message already seeded.\n" in output) == duplicate
+    assert ("Title: Synthetic task\n" in output) != duplicate
+    assert "Token:" not in output
+    assert "Link:" not in output
+    assert "#token=" not in output
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--keep-token", "1001", "Synthetic", "task"],
+        ["1001", "--keep-token", "Synthetic", "task"],
+    ],
+)
+def test_keep_token_flag_dispatches_before_or_after_user_id(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    calls: list[tuple[int, str]] = []
+
+    async def capture_run(telegram_user_id: int, text: str) -> None:
+        calls.append((telegram_user_id, text))
+
+    monkeypatch.setattr(seed_cli, "run_keep_token", capture_run, raising=False)
+    monkeypatch.setattr(sys, "argv", ["seed", *arguments])
+    seed_cli.main()
+    assert calls == [(1001, "Synthetic task")]
+
+
+def test_keep_token_cli_refusal_exits_two_and_closes_resources(
+    resources: CliResources,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    message = "This user has no dashboard link yet; run without --keep-token first."
+
+    async def refuse_seed(*args: object) -> seed_entrypoint.KeptTokenSeedResult:
+        raise DomainError(message)
+
+    monkeypatch.setattr(seed_cli, "seed_keep_token", refuse_seed, raising=False)
+    monkeypatch.setattr(sys, "argv", ["seed", "--keep-token", "1001"])
+    with pytest.raises(SystemExit) as exited:
+        seed_cli.main()
+    assert exited.value.code == 2
+    assert resources.closed == ["extractor", "redis", "engine"]
+    output = capsys.readouterr()
+    assert message in output.err
+    assert output.out == ""
+    assert "Traceback" not in output.err

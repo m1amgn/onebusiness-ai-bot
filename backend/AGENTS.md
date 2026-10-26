@@ -122,6 +122,16 @@ invokes standalone task creation and token issue, then publish_events once after
 both commits. Duplicate messages still rotate the token and publish auth.revoked.
 Publication failure preserves the tasks, token and link and logs one failed batch.
 
+The separate seed_keep_token path registers the user, then reads get_token_version
+through a unit of work before task creation. A zero version refuses with DomainError;
+the upsert may create the user row, but no task or event is created. An existing
+link permits standalone task creation and publication of its committed events only.
+A duplicate publishes nothing. KeptTokenSeedResult has no token or link fields.
+The CLI accepts --keep-token before or after the Telegram user id and uses a separate
+run_keep_token runner. Both runners share resource ownership through open_seed_ports.
+The kept-token output contains titles, the channel and a token-preservation notice.
+It never prints a token or dashboard link, and a refusal exits with status 2.
+
 SeedResult.user_id comes from the token issue result's authoritative internal user
 id. Print its namespaced user_channel, never the Telegram id. CLI message ids are
 negative microsecond timestamps to avoid real Telegram ids. The CLI validates user

@@ -4,9 +4,9 @@ A task-management application. Users create tasks by sending text or voice messa
 
 The domain core and PostgreSQL persistence are available, with migrations and a
 command to create development tasks. The API serves authenticated task pages,
-status changes and real-time events. The frontend is a placeholder with a generated
-API contract. The worker runtime is available. Bot handlers and task dashboard
-features are added in later stages.
+status changes and real-time events. The dashboard displays a live task board with
+desktop columns and phone tabs. The worker runtime is available. Bot handlers are
+added in a later stage.
 
 ## Local setup
 
@@ -50,6 +50,7 @@ No API key or Telegram token is needed for the foundation checks.
 | `yarn dev:whisper` | Local whisper.cpp server on `http://127.0.0.1:8178` |
 | `yarn db:migrate` | Upgrade the database schema to the latest Alembic revision |
 | `yarn --silent dev:seed <telegram_user_id> [text …]` | Create tasks, rotate the dashboard token and publish events |
+| `yarn --silent dev:seed --keep-token <telegram_user_id> [text …]` | Create tasks while keeping an existing dashboard link valid |
 | `yarn --silent live:extraction --thinking disabled\|adaptive` | Paid, opt-in replay of eight synthetic messages with Claude |
 | `yarn dev:worker transcribe` / `yarn dev:worker notify` | Start the prefork worker roles; notify also runs beat |
 | `yarn dev:bot` | Bot; currently fails naming stage S4 |
@@ -72,12 +73,19 @@ Without text, the seed uses a built-in English sample. The current fallback keep
 one task per message, cuts its title to 120 characters and keeps longer text in
 the description.
 The seed stores tasks and prints the token and `<WEB_BASE_URL>/#token=…` link.
-Every run rotates the token, including a duplicate message, so older links stop
+Every default run rotates the token, including a duplicate message, so older links stop
 working. After both database commits, it publishes one `task.created` per task,
 then `auth.revoked`. The printed `Events channel:` uses the stored user's internal
 id, which differs from the Telegram id on the command line. A test namespace also
-prefixes this channel. The dashboard arrives later; this command
-verifies persistence and Redis publication without Telegram.
+prefixes this channel. Open the printed link in the dashboard. To add tasks while
+that dashboard stays signed in, use `--keep-token` after the first default run:
+
+```sh
+yarn --silent dev:seed --keep-token 1001 "Prepare the weekly report."
+```
+
+This mode publishes only task events and prints no token or link. It refuses a
+user who has never had a dashboard link; run the default seed first.
 
 To observe development events, subscribe in another terminal before seeding:
 
@@ -91,6 +99,35 @@ batch and still prints the committed token and link. It skips the remaining
 events in that batch. The CLI closes its extractor, Redis client and SQL engine on exit.
 The seed publisher and root command were verified against real local stores with
 synthetic tasks, an owned test database and a private Redis namespace.
+
+## Task dashboard
+
+Run `yarn dev:api` and `yarn dev:web`, then open a seeded dashboard link. The page
+stores its token locally and removes the URL fragment. A new link replaces the
+session in other tabs. An invalid link asks for a new `/dashboard` link from the bot.
+
+At desktop widths the board shows Pending, In Progress and Completed columns.
+Below 768 pixels, tabs show one column at a time. Arrow buttons move a task to a
+neighboring status; desktop cards also support dragging between columns. Status
+changes appear immediately and are serialized per card. Deletion requires
+confirmation and waits for the server; there is no undo.
+
+Long descriptions expand with Show more. Source message opens the original text
+in a disclosure block. Each column loads more tasks on request; a `+` after its
+count means more tasks remain. Live, Connecting and Reconnecting describe the
+stream state. Every reconnect reloads all tasks down to the oldest shown card.
+The dev proxy propagates an interrupted API stream so reconnection also works
+after an API restart.
+
+The deterministic dashboard replay uses the eight synthetic extraction rows and
+checks the implemented board, text, moves, deletion, live arrival and sign-out:
+
+```sh
+uv run --locked --directory backend python tests/acceptance/generate_s7_fixture.py
+yarn workspace frontend vitest run src/app/replay.test.tsx
+```
+
+The fixture comes from the backend's canonical task API; do not edit it by hand.
 
 ## Claude extraction
 
@@ -293,7 +330,7 @@ The full application Compose stack is delivered after the remaining modules.
 
 Run `yarn dev:api` after the shared stores are available and the development
 database is migrated. `yarn dev:seed` prints a bearer token for local requests.
-Every new token invalidates older links for that user. The dashboard will read
+Every new token invalidates older links for that user. The dashboard reads
 the token from its URL fragment; API calls send `Authorization: Bearer <token>`.
 Missing or invalid credentials return `401` with instructions to request a new link.
 
@@ -306,7 +343,7 @@ Missing or invalid credentials return `401` with instructions to request a new l
 | `POST /api/realtime/tickets` | Single-use ticket valid for 30 seconds |
 | `GET /api/events?ticket=…` | SSE task events and revocation notifications |
 
-Each task includes `source_text`, the stored message text for its tooltip. Follow
+Each task includes `source_text`, the stored message text for its Source message block. Follow
 `next_cursor` to load another page. A foreign or missing task returns `404`.
 Status publication follows the database commit; a Redis failure does not undo a
 saved change. Refresh the task list after every stream reconnect.

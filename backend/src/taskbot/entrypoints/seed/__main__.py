@@ -2,10 +2,11 @@ import argparse
 import asyncio
 import logging
 import time
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from taskbot.domain.errors import DomainError
-from taskbot.entrypoints.seed import build_seed_ports, seed
+from taskbot.entrypoints.seed import SeedPorts, build_seed_ports, seed, seed_keep_token
 from taskbot.entrypoints.settings import load_settings
 from taskbot.infrastructure.extraction.factory import open_extractor
 from taskbot.infrastructure.redis.client import create_redis_client, user_channel
@@ -28,7 +29,8 @@ def positive_int64(value: str) -> int:
     return result
 
 
-async def run(telegram_user_id: int, text: str) -> None:
+@asynccontextmanager
+async def open_seed_ports() -> AsyncIterator[tuple[SeedSettings, SeedPorts]]:
     settings = load_settings(SeedSettings)
     logging.basicConfig(level=settings.log_level)
     async with AsyncExitStack() as resources:
@@ -43,17 +45,20 @@ async def run(telegram_user_id: int, text: str) -> None:
         def uows() -> SqlAlchemyUnitOfWork:
             return SqlAlchemyUnitOfWork(sessions)
 
-        result = await seed(
+        yield (
+            settings,
             build_seed_ports(
                 settings,
                 uows,
                 extractor,
                 publisher=RedisEventPublisher(client, settings.redis_namespace),
             ),
-            telegram_user_id,
-            text,
-            -(time.time_ns() // 1000),
         )
+
+
+async def run(telegram_user_id: int, text: str) -> None:
+    async with open_seed_ports() as (settings, ports):
+        result = await seed(ports, telegram_user_id, text, -(time.time_ns() // 1000))
         if result.duplicate:
             print("Message already seeded.")
         for title in result.titles:
@@ -64,14 +69,29 @@ async def run(telegram_user_id: int, text: str) -> None:
         print("Older dashboard links stop working after every seed run.")
 
 
+async def run_keep_token(telegram_user_id: int, text: str) -> None:
+    async with open_seed_ports() as (settings, ports):
+        result = await seed_keep_token(ports, telegram_user_id, text, -(time.time_ns() // 1000))
+        if result.duplicate:
+            print("Message already seeded.")
+        for title in result.titles:
+            print(f"Title: {title}")
+        print(f"Events channel: {user_channel(settings.redis_namespace, result.user_id)}")
+        print("Token unchanged; open dashboards stay signed in.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create development tasks and a dashboard token.")
+    parser.add_argument(
+        "--keep-token", action="store_true", help="Keep the existing dashboard token."
+    )
     parser.add_argument("telegram_user_id", type=positive_int64)
     parser.add_argument("text", nargs="*")
-    args = parser.parse_args()
+    args = parser.parse_intermixed_args()
     text = " ".join(args.text) if args.text else SAMPLE_TEXT
     try:
-        asyncio.run(run(args.telegram_user_id, text))
+        runner = run_keep_token if args.keep_token else run
+        asyncio.run(runner(args.telegram_user_id, text))
     except DomainError as error:
         parser.error(str(error))
 
