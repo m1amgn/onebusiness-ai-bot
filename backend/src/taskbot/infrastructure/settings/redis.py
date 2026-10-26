@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, RedisDsn, field_validator
 
@@ -20,4 +20,13 @@ class RedisSettingsMixin(BaseModel):
     def broker_url(self) -> str:
         if self.celery_broker_url is not None:
             return str(self.celery_broker_url)
-        return urlunsplit(urlsplit(str(self.redis_url))._replace(path="/1"))
+        parts = urlsplit(str(self.redis_url))
+        # Kombu rejects redis-py query options, but SSL options carry certificate policy.
+        query = urlencode(
+            [
+                (key, value)
+                for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                if key.startswith("ssl_")
+            ]
+        )
+        return urlunsplit(parts._replace(path="/1", query=query, fragment=""))

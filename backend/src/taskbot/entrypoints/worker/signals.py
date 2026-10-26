@@ -29,7 +29,7 @@ def worker_init(sender: object = None, **kwargs: object) -> None:
 
 
 def _broker_display(url: str) -> str:
-    parts = urlsplit(url)
+    parts = urlsplit(url)._replace(query="", fragment="")
     if parts.password is not None:
         login, host = parts.netloc.rsplit("@", 1)
         parts = parts._replace(netloc=login.split(":", 1)[0] + ":***@" + host)

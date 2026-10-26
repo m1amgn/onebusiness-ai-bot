@@ -1,3 +1,4 @@
+import ssl
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ from pydantic import ValidationError
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialWithJitterBackoff
 
+from taskbot.infrastructure.celery.app import create_celery_app
 from taskbot.infrastructure.redis.client import create_redis_client
 from taskbot.infrastructure.settings.worker import BrokerSettings
 
@@ -22,12 +24,50 @@ def test_broker_default_and_empty_override(tmp_path: Path) -> None:
     assert BrokerSettings(_env_file=dotenv).broker_url == "redis://localhost:6379/1"
 
 
-def test_broker_derivation_preserves_credentials_and_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("REDIS_URL", "redis://u:p@h:6380/3?socket_timeout=2")
+@pytest.mark.parametrize(
+    ("redis_url", "expected", "tls"),
+    [
+        ("redis://u:p@h:6380/3?socket_timeout=2", "redis://u:p@h:6380/1", False),
+        (
+            "rediss://h:6380/3?ssl_cert_reqs=required&socket_timeout=2#f",
+            "rediss://h:6380/1?ssl_cert_reqs=required",
+            True,
+        ),
+        (
+            "rediss://u:p@h:6380/3?socket_timeout=2&ssl_cert_reqs=required"
+            "&ssl_ca_certs=%2Ftest+certs%2Fca.pem&ssl_check_hostname=true",
+            "rediss://u:p@h:6380/1?ssl_cert_reqs=required"
+            "&ssl_ca_certs=%2Ftest+certs%2Fca.pem&ssl_check_hostname=true",
+            True,
+        ),
+    ],
+)
+def test_derived_broker_accepts_client_options_and_preserves_tls(
+    redis_url: str, expected: str, tls: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REDIS_URL", redis_url)
     settings = BrokerSettings(_env_file=None)
-    assert settings.broker_url == "redis://u:p@h:6380/1?socket_timeout=2"
-    monkeypatch.setenv("CELERY_BROKER_URL", "redis://h:6380/4")
-    assert BrokerSettings(_env_file=None).broker_url == "redis://h:6380/4"
+    assert settings.broker_url == expected
+    assert str(settings.redis_url) == redis_url
+    app = create_celery_app(broker_url=settings.broker_url, namespace="")
+    try:
+        with app.connection_for_write() as connection:
+            assert not connection.connected
+            if tls:
+                assert connection.ssl["ssl_cert_reqs"] == ssl.CERT_REQUIRED
+            else:
+                assert connection.ssl is False
+            if "ssl_ca_certs" in redis_url:
+                assert connection.ssl["ssl_ca_certs"] == "/test certs/ca.pem"
+                assert connection.ssl["ssl_check_hostname"] is True
+    finally:
+        app.close()
+
+
+def test_explicit_broker_url_is_preserved_and_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    explicit = "redis://h:6380/4?connect_timeout=3#fragment"
+    monkeypatch.setenv("CELERY_BROKER_URL", explicit)
+    assert BrokerSettings(_env_file=None).broker_url == explicit
     monkeypatch.setenv("CELERY_BROKER_URL", "amqp://h/")
     with pytest.raises(ValidationError, match="celery_broker_url"):
         BrokerSettings(_env_file=None)

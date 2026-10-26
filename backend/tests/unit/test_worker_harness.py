@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -42,12 +43,14 @@ async def test_replacement_timeout_override_is_only_explicit(
         alive_timeout=override,
     ) as worker:
         assert worker.schedule_path.parent.is_relative_to(tmp_path)
-        assert worker.schedule_path.parent == Path(captured[0]["TMPDIR"])
+        root = Path(captured[0]["TMPDIR"])
+        assert worker.schedule_path.parent == root / f"taskbot-{os.getuid()}"
         if override is None:
             assert "TASKBOT_TEST_ALIVE_TIMEOUT" not in captured[0]
             assert "TASKBOT_TEST_ALIVE_TIMEOUT" not in worker.env
         else:
             assert captured[0]["TASKBOT_TEST_ALIVE_TIMEOUT"] == "4"
+    assert not await asyncio.to_thread(root.exists)
 
 
 def test_loop_receipts_distinguish_replaced_loops_even_with_reused_address(

@@ -1,7 +1,9 @@
 import os
+import stat
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 
 from taskbot.entrypoints.settings import load_settings
@@ -44,7 +46,29 @@ def worker_environment(environ: Mapping[str, str], platform: str) -> dict[str, s
 
 def beat_schedule_path(namespace: str) -> str:
     suffix = "-" + namespace.replace(":", "_") if namespace else ""
-    return str(Path(tempfile.gettempdir()) / ("celerybeat-schedule" + suffix))
+    directory = Path(tempfile.gettempdir()) / f"taskbot-{os.getuid()}"
+    return str(directory / ("celerybeat-schedule" + suffix))
+
+
+def _prepare_beat_directory(directory: Path) -> None:
+    try:
+        with suppress(FileExistsError):
+            os.mkdir(directory, 0o700)
+        metadata = os.lstat(directory)
+        if (
+            stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_uid == os.getuid()
+            and metadata.st_mode & 0o077 == 0
+        ):
+            return
+    except OSError:
+        pass
+    print(
+        f"Invalid configuration: beat schedule directory {directory} must be a directory "
+        "owned by this user with no group or other access",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 def launch(arguments: Sequence[str]) -> None:
@@ -55,11 +79,14 @@ def launch(arguments: Sequence[str]) -> None:
         raise SystemExit(2)
     os.environ["WORKER_ROLE"] = role
     settings = load_settings(WorkerSettings)
+    schedule = beat_schedule_path(settings.redis_namespace)
+    if role == "notify":
+        _prepare_beat_directory(Path(schedule).parent)
     argv = [
         sys.executable,
         "-m",
         "celery",
-        *build_worker_argv(role, beat_schedule_path(settings.redis_namespace)),
+        *build_worker_argv(role, schedule),
         *extra,
     ]
     os.execve(sys.executable, argv, worker_environment(os.environ, sys.platform))
