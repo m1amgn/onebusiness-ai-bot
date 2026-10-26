@@ -1,6 +1,6 @@
 # S9 — Task extraction with Claude Haiku
 
-> **STATUS 2026-10-26: ACTIVE — stage design, round 4: owner-approved acceptance amendment after the live run (S9-D10: two A8 checks, a prompt fix, one more 8-call replay; section 10), for the design gate.**
+> **STATUS 2026-10-26: ACTIVE — stage design, round 4: owner-approved acceptance amendment after the live run (S9-D10: two A8 checks, a prompt fix, one more 8-call replay; section 10), for the design gate.** Integrated at `c2d0ec0`. The tooltip in S9-D4 and row Y7 is superseded by docs/plans/2026-10-26-s7-dashboard.md K6 and umbrella section 16: the dashboard shows the source text in a collapsible "Source message" block on each card. That the text reaches the dashboard on both paths, `GET /api/tasks` and `task.created`, still holds.
 
 Stage S9 of the umbrella design `docs/plans/2026-10-23-umbrella-assessment.md` (umbrella section 5, S9), read with its amendments 1 and 2 (umbrella sections 12 and 13) and the S2 design `docs/plans/2026-10-24-s2-domain-core.md`. The umbrella fixes the scope; this document fixes how S9 delivers it, records the owner's decisions for this stage, and lists where S9 departs from the umbrella's text (section 9, rows Y1–Y10). "Umbrella x.y" names a section of the umbrella design; a bare number names a section of this document. The implementation steps are called S9.1 to S9.5. The acceptance rows of this stage are called A1–A9, to keep them apart from S2's replay rows R1–R6.
 
