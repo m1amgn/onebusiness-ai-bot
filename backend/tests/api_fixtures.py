@@ -10,6 +10,7 @@ from taskbot.application.create_tasks import (
     DuplicateMessage,
 )
 from taskbot.application.dashboard_token import AuthenticateToken, IssueDashboardToken
+from taskbot.application.delete_task import DeleteTask
 from taskbot.application.list_tasks import ListTasks
 from taskbot.application.realtime_tickets import ConsumeRealtimeTicket, IssueRealtimeTicket
 from taskbot.application.register_user import RegisterOrGetUser
@@ -60,6 +61,7 @@ async def fake_api() -> ApiFixture:
         authenticate=AuthenticateToken(store, Sha256TokenHasher()),
         list_tasks=ListTasks(store),
         change_task_status=ChangeTaskStatus(store, clock),
+        delete_task=DeleteTask(store),
         issue_ticket=IssueRealtimeTicket(tickets),
         consume_ticket=ConsumeRealtimeTicket(tickets, store),
         stream_events=StreamUserEvents(subscriber, store, elapsed),

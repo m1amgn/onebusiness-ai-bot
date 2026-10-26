@@ -1,7 +1,7 @@
 import re
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, Path, Query, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict
 
@@ -76,3 +76,12 @@ async def change_task_status(
     result = await services.change_task_status.execute(user.user_id, task_id, body.status)
     await publish_events(services.publisher, result.events)
     return result.view
+
+
+@router.delete(
+    "/{task_id}", status_code=204, response_class=Response, responses={404: {"model": ApiError}}
+)
+async def delete_task(task_id: TaskId, user: CurrentUser, services: Services) -> Response:
+    events = await services.delete_task.execute(user.user_id, task_id)
+    await publish_events(services.publisher, events)
+    return Response(status_code=204)

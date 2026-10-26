@@ -295,6 +295,7 @@ Missing or invalid credentials return `401` with instructions to request a new l
 | `GET /health` | Public health response |
 | `GET /api/tasks?limit=50&status=pending` | Task items and an opaque `next_cursor`; optional status; maximum limit 200 |
 | `PATCH /api/tasks/{task_id}` | Set `status` to `pending`, `in_progress` or `completed`; return the task |
+| `DELETE /api/tasks/{task_id}` | Permanently delete the task; return `204` without a body |
 | `POST /api/realtime/tickets` | Single-use ticket valid for 30 seconds |
 | `GET /api/events?ticket=…` | SSE task events and revocation notifications |
 
@@ -302,6 +303,12 @@ Each task includes `source_text`, the stored message text for its tooltip. Follo
 `next_cursor` to load another page. A foreign or missing task returns `404`.
 Status publication follows the database commit; a Redis failure does not undo a
 saved change. Refresh the task list after every stream reconnect.
+
+Deletion also erases the stored source message text when its last task is gone.
+The message record remains to prevent a duplicate delivery from recreating the
+task. Other tabs receive `task.deleted` with the task id. Deletion has no undo and
+does not remove the original message from the Telegram chat. Apply database
+migrations through revision `0003` before using this operation.
 
 The stream sends `: connected` after confirming its Redis subscription, then JSON
 `data:` frames without an `event:` field. Parse their `type` discriminator with

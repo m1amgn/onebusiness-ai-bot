@@ -143,6 +143,15 @@ export const zListTasksQuery = z.object({
  */
 export const zListTasksResponse = zTaskPage;
 
+export const zDeleteTaskPath = z.object({
+  task_id: z.int().gte(1).lte(2147483647),
+});
+
+/**
+ * Successful Response
+ */
+export const zDeleteTaskResponse = z.void();
+
 export const zChangeTaskStatusBody = zTaskStatusChange;
 
 export const zChangeTaskStatusPath = z.object({

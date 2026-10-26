@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy import and_, delete, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from taskbot.domain.extraction import TaskDraft
@@ -60,6 +60,9 @@ class SqlAlchemyTaskRepository:
             .returning(*TaskRow.__table__.c),
         )
         return None if row is None else task_from_row(row)
+
+    async def delete(self, task_id: int) -> None:
+        await self._session.execute(delete(concrete_table(TaskRow)).where(TaskRow.id == task_id))
 
     async def page_for_user(
         self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, fetch: int

@@ -40,6 +40,8 @@ class InboundMessageRepository(Protocol):
 
     async def get(self, message_id: int) -> InboundMessage | None: ...
 
+    async def erase_text_if_unused(self, message_id: int) -> None: ...
+
 
 class TaskRepository(Protocol):
     async def add_many(
@@ -49,6 +51,8 @@ class TaskRepository(Protocol):
     async def get_for_update(self, user_id: int, task_id: int) -> Task | None: ...
 
     async def save_status(self, task: Task) -> Task | None: ...
+
+    async def delete(self, task_id: int) -> None: ...
 
     async def page_for_user(
         self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, fetch: int

@@ -152,7 +152,7 @@ async def test_two_migrators_serialize_on_an_empty_database() -> None:
             group.create_task(upgrade())
         connection = await asyncpg.connect(raw_url(url))
         try:
-            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0002"
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003"
             assert (
                 await connection.fetchval(
                     "SELECT count(*) FROM pg_tables WHERE schemaname='public'"
@@ -180,13 +180,75 @@ async def test_description_limit_downgrade_restores_2000_then_upgrade_restores_4
             """)
             assert normalize_sql(definition) == "CHECKchar_lengthdescription<=2000"
             await asyncio.to_thread(command.upgrade, config, "head")
-            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0002"
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003"
             definition = await connection.fetchval("""
                 SELECT pg_get_constraintdef(oid) FROM pg_constraint
                 WHERE conname='ck_tasks_description_length'
                     AND conrelid='public.tasks'::regclass
             """)
             assert normalize_sql(definition) == "CHECKchar_lengthdescription<=4096"
+        finally:
+            await connection.close()
+    assert await development_schema() == before
+
+
+async def test_message_text_erasure_migration_preserves_deduplication_on_downgrade() -> None:
+    before = await development_schema()
+    async with database_context() as url:
+        config = make_alembic_config(url)
+        await asyncio.to_thread(command.upgrade, config, "0002")
+        connection = await asyncpg.connect(raw_url(url))
+        try:
+            assert (
+                await connection.fetchval("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='inbound_messages'
+                    AND column_name='text'
+            """)
+                == "NO"
+            )
+            await asyncio.to_thread(command.upgrade, config, "head")
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003"
+            assert (
+                await connection.fetchval("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='inbound_messages'
+                    AND column_name='text'
+            """)
+                == "YES"
+            )
+            await connection.execute("""
+                INSERT INTO users (telegram_user_id, display_name, created_at, updated_at)
+                VALUES (7, 'Test user', now(), now());
+                INSERT INTO inbound_messages (
+                    user_id, telegram_chat_id, telegram_message_id, kind, text,
+                    extractor, degraded, created_at
+                ) VALUES (1, 7, 1, 'text', NULL, 'heuristic', false, now());
+            """)
+            await asyncio.to_thread(command.downgrade, config, "0002")
+            assert (
+                await connection.fetchval("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='inbound_messages'
+                    AND column_name='text'
+            """)
+                == "NO"
+            )
+            row = await connection.fetchrow("""
+                SELECT telegram_chat_id, telegram_message_id, text FROM inbound_messages
+            """)
+            assert row is not None
+            assert tuple(row) == (7, 1, "")
+            await asyncio.to_thread(command.upgrade, config, "head")
+            await asyncio.to_thread(command.check, config)
+            assert (
+                await connection.fetchval("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='inbound_messages'
+                    AND column_name='text'
+            """)
+                == "YES"
+            )
         finally:
             await connection.close()
     assert await development_schema() == before

@@ -133,6 +133,7 @@ async def test_missing_ticket_is_unauthorized() -> None:
 def test_event_schema_is_canonical_and_discriminated() -> None:
     schemas = create_app().openapi()["components"]["schemas"]
     assert schemas["TaskView"]["properties"]["title"]["maxLength"] == 120
+    assert schemas["TaskView"]["properties"]["description"]["maxLength"] == 4096
     assert "source_text" in schemas["TaskView"]["required"]
     assert "user_id" not in schemas["TaskCreated"]["properties"]
     assert schemas["ServerEvent"]["discriminator"]["propertyName"] == "type"
@@ -172,6 +173,7 @@ def test_expected_error_responses_share_a_generated_contract() -> None:
     for path, method, statuses in [
         ("/api/tasks", "get", (401,)),
         ("/api/tasks/{task_id}", "patch", (401, 404)),
+        ("/api/tasks/{task_id}", "delete", (401, 404)),
         ("/api/realtime/tickets", "post", (401,)),
         ("/api/events", "get", (401, 503)),
     ]:

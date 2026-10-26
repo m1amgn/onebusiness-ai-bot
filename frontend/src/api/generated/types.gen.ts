@@ -310,6 +310,44 @@ export type ListTasksResponses = {
 
 export type ListTasksResponse = ListTasksResponses[keyof ListTasksResponses];
 
+export type DeleteTaskData = {
+  body?: never;
+  path: {
+    /**
+     * Task Id
+     */
+    task_id: number;
+  };
+  query?: never;
+  url: '/api/tasks/{task_id}';
+};
+
+export type DeleteTaskErrors = {
+  /**
+   * Unauthorized
+   */
+  401: ApiError;
+  /**
+   * Not Found
+   */
+  404: ApiError;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteTaskError = DeleteTaskErrors[keyof DeleteTaskErrors];
+
+export type DeleteTaskResponses = {
+  /**
+   * Successful Response
+   */
+  204: void;
+};
+
+export type DeleteTaskResponse = DeleteTaskResponses[keyof DeleteTaskResponses];
+
 export type ChangeTaskStatusData = {
   body: TaskStatusChange;
   path: {

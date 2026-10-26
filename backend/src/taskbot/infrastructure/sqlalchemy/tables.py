@@ -85,7 +85,7 @@ class InboundMessageRow(Base):
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
     telegram_message_id: Mapped[int] = mapped_column(BigInteger)
     kind: Mapped[MessageKind] = mapped_column(string_enum(MessageKind, "kind"))
-    text: Mapped[str] = mapped_column(Text)
+    text: Mapped[str | None] = mapped_column(Text)
     extractor: Mapped[ExtractorName] = mapped_column(string_enum(ExtractorName, "extractor"))
     degraded: Mapped[bool] = mapped_column(Boolean)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

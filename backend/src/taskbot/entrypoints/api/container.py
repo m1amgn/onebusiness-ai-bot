@@ -8,6 +8,7 @@ from fastapi import Depends, Request
 
 from taskbot.application.change_task_status import ChangeTaskStatus
 from taskbot.application.dashboard_token import AuthenticateToken
+from taskbot.application.delete_task import DeleteTask
 from taskbot.application.list_tasks import ListTasks
 from taskbot.application.realtime_tickets import ConsumeRealtimeTicket, IssueRealtimeTicket
 from taskbot.application.stream_events import StreamUserEvents
@@ -28,6 +29,7 @@ class ApiServices:
     authenticate: AuthenticateToken
     list_tasks: ListTasks
     change_task_status: ChangeTaskStatus
+    delete_task: DeleteTask
     issue_ticket: IssueRealtimeTicket
     consume_ticket: ConsumeRealtimeTicket
     stream_events: StreamUserEvents
@@ -51,6 +53,7 @@ async def open_api_services(settings: ApiSettings) -> AsyncIterator[ApiServices]
             authenticate=AuthenticateToken(uows, Sha256TokenHasher()),
             list_tasks=ListTasks(uows),
             change_task_status=ChangeTaskStatus(uows, SystemClock()),
+            delete_task=DeleteTask(uows),
             issue_ticket=IssueRealtimeTicket(tickets),
             consume_ticket=ConsumeRealtimeTicket(tickets, uows),
             stream_events=StreamUserEvents(
