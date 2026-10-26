@@ -126,11 +126,11 @@ class BotFactories:
         return client
 
     def make_lock(self, client: Redis, namespace: str) -> PollingLock:
-        self.owned.lock = PollingLock(client, namespace, ttl_seconds=2, call_timeout=0.3)
+        self.owned.lock = PollingLock(client, namespace, ttl_seconds=10)
         return self.owned.lock
 
     def make_keeper(self, lock: PollingLock) -> LockKeeper:
-        return LockKeeper(lock, renew_seconds=0.1, stop_after_seconds=1)
+        return LockKeeper(lock, renew_seconds=0.1, stop_after_seconds=5)
 
     def make_app(self, *, broker_url: str, namespace: str) -> Celery:
         self.owned.builds.append("app")

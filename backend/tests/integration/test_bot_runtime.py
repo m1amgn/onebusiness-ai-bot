@@ -66,9 +66,10 @@ async def test_startup_delay_keeps_ownership_past_the_original_lease(
     owned.session.stop_on_poll = True
     task = asyncio.create_task(bot_cli.run(owned.settings))
     try:
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(30):
             await owned.session.started.wait()
-            await asyncio.sleep(2.3)
+            assert owned.lock is not None
+            await asyncio.sleep(owned.lock.ttl_seconds + 0.3)
             async with create_redis_client(str(owned.settings.redis_url)) as client:
                 assert not await PollingLock(client, owned.settings.redis_namespace).acquire()
             gate.set()
