@@ -266,14 +266,6 @@ describe('createApiClient', () => {
 
   it('times out a pending ticket at 10 seconds', async () => {
     vi.useFakeTimers();
-    // Native AbortSignal.timeout bypasses Vitest's fake timers.
-    vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
-      const controller = new AbortController();
-      setTimeout(() => {
-        controller.abort();
-      }, milliseconds);
-      return controller.signal;
-    });
     const client = createApiClient({ token, fetchImpl: pendingFetch() });
     let settled = false;
     const result = readError(client.issueTicket()).then((error) => {
@@ -285,6 +277,31 @@ describe('createApiClient', () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect((await result).status).toBe(0);
+  });
+
+  it('issues a ticket when native signal composition is unavailable and cleans up on success', async () => {
+    vi.useFakeTimers();
+    const nativeAny = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+    Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const client = createApiClient({
+      token,
+      fetchImpl: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse({ ticket: 'ticket', expires_in: 60 })),
+    });
+    try {
+      await expect(client.issueTicket(controller.signal)).resolves.toEqual({
+        ticket: 'ticket',
+        expires_in: 60,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    } finally {
+      // Restore the global even when the request throws synchronously on the old implementation.
+      if (nativeAny) Object.defineProperty(AbortSignal, 'any', nativeAny);
+    }
   });
 
   it('allows the caller to abort a ticket before its timeout', async () => {

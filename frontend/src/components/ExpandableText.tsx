@@ -12,6 +12,7 @@ export const ExpandableText = ({ text }: OwnProps) => {
   useLayoutEffect(() => {
     const element = content.current;
     if (!element) return;
+    let active = true;
     const handleMeasureCollapsedOverflow = (): void => {
       element.classList.add('line-clamp-3');
       const overflows = element.scrollHeight > element.clientHeight;
@@ -21,7 +22,13 @@ export const ExpandableText = ({ text }: OwnProps) => {
     handleMeasureCollapsedOverflow();
     const observer = new ResizeObserver(handleMeasureCollapsedOverflow);
     observer.observe(element);
+    if ('fonts' in document) {
+      void document.fonts.ready.then(() => {
+        if (active) handleMeasureCollapsedOverflow();
+      });
+    }
     return () => {
+      active = false;
       observer.disconnect();
     };
   }, [text, expanded]);

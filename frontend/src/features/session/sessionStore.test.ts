@@ -36,6 +36,29 @@ afterEach(() => {
 });
 
 describe('session capture', () => {
+  it.each([true, false])(
+    'captures a new fragment after rejection with storage available: %s',
+    (available) => {
+      window.history.replaceState(null, '', '/tasks?view=board#token=first-link');
+      const store = createStore(available ? window.localStorage : null);
+      store.capture();
+      subscriptions.push(store.subscribe(() => undefined));
+      store.clearIfCurrent('first-link');
+
+      window.history.replaceState(null, '', '/tasks?view=board#token=fresh%2Blink');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+      expect(store.getSnapshot()).toEqual({ token: 'fresh+link', rejected: false });
+      expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+        '/tasks?view=board',
+      );
+      if (available) expect(window.localStorage.getItem(storageKey)).toBe('fresh+link');
+      const replacement = createStore(available ? window.localStorage : null);
+      replacement.capture();
+      expect(replacement.getSnapshot()).toEqual({ token: 'fresh+link', rejected: false });
+    },
+  );
+
   it('stores the fragment instead of the older token and removes it without changing the route', () => {
     window.localStorage.setItem(storageKey, 'older-link');
     window.history.replaceState({ old: true }, '', '/tasks?view=board#token=fresh%2Blink');
@@ -148,7 +171,7 @@ describe('cross-tab session updates', () => {
 
     broadcast(operation === 'clear' ? null : storageKey, null);
 
-    expect(store.getSnapshot()).toEqual({ token: null, rejected: false });
+    expect(store.getSnapshot()).toEqual({ token: null, rejected: true });
   });
 
   it('stops receiving cross-tab changes after the last listener unsubscribes', () => {

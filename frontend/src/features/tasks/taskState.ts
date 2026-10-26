@@ -158,22 +158,13 @@ export const boardReducer = (previous: BoardState, action: BoardAction): BoardSt
       break;
     case 'move.target': {
       if (!state.byId.has(action.id) || state.deleting.has(action.id)) return previous;
-      state.moves.set(action.id, {
-        to: action.to,
-        inFlight: state.moves.get(action.id)?.inFlight ?? false,
-      });
+      state.moves.set(action.id, { to: action.to });
       state.cardErrors.delete(action.id);
-      break;
-    }
-    case 'move.started': {
-      const move = state.moves.get(action.id);
-      if (move) state.moves.set(action.id, { ...move, inFlight: true });
       break;
     }
     case 'move.finished': {
       const move = state.moves.get(action.id);
       if (move?.to === state.byId.get(action.id)?.status) state.moves.delete(action.id);
-      else if (move) state.moves.set(action.id, { ...move, inFlight: false });
       break;
     }
     case 'move.failed':

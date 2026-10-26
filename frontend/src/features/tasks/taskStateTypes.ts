@@ -18,7 +18,7 @@ export type BoardState = {
   byId: Map<number, TaskView>;
   deleted: Set<number>;
   columns: Record<TaskStatus, ColumnLoad>;
-  moves: Map<number, { to: TaskStatus; inFlight: boolean }>;
+  moves: Map<number, { to: TaskStatus }>;
   deleting: Set<number>;
   cardErrors: Map<number, 'move' | 'delete'>;
   arrived: Set<number>;
@@ -32,7 +32,7 @@ export type BoardAction =
   | BoardChange
   | { type: 'arrival.finished'; id: number }
   | { type: 'move.target'; id: number; to: TaskStatus }
-  | { type: 'move.started' | 'move.finished' | 'move.failed'; id: number }
+  | { type: 'move.finished' | 'move.failed'; id: number }
   | { type: 'delete.started' | 'delete.failed'; id: number }
   | ({ type: 'page.started' } & PageRequest)
   | ({ type: 'page.received'; cursor: string | null; page: TaskPage } & PageRequest)

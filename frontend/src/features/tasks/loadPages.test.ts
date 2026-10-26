@@ -54,6 +54,7 @@ describe('page loading and common board frontier', () => {
     expect(visibleTasks(board.getState(), 'pending')).toHaveLength(99);
     expect(board.getState().byId.has(1)).toBe(false);
     expect(board.getState().columns.pending.edge).toEqual({ inbound_message_id: 2, position: 0 });
+    expect(board.getState().arrived.size).toBe(0);
     board.loader.stop();
   });
 
@@ -98,7 +99,7 @@ describe('page loading and common board frontier', () => {
     board.loader.stop();
   });
 
-  it('retains a failed frontier and widens it to cards shown before the next open', async () => {
+  it('widens a failed frontier to cards shown before the next open', async () => {
     const board = setup([task(20)]);
     await board.loader.initialLoad();
     board.loader.captureFrontier();
@@ -111,6 +112,29 @@ describe('page loading and common board frontier', () => {
     board.replace(Array.from({ length: 260 }, (_, index) => task(index + 2)));
     await board.loader.resync();
     expect(board.getState().byId.has(1)).toBe(false);
+    expect(visibleTasks(board.getState(), 'pending')).toHaveLength(260);
+    expect(board.getState().columns.pending.complete).toBe(true);
+    board.loader.stop();
+  });
+
+  it('retains the disconnected frontier when its oldest card and edge disappear before a retry', async () => {
+    const board = setup([task(1)]);
+    await board.loader.initialLoad();
+    board.loader.captureFrontier();
+    board.dispatch({ type: 'task.deleted', task_id: 1 });
+    board.dispatch({ type: 'page.started', status: 'pending', epoch: 0, requestId: 10 });
+    board.dispatch({
+      type: 'page.received',
+      status: 'pending',
+      epoch: 0,
+      requestId: 10,
+      cursor: null,
+      page: { items: [task(250)], next_cursor: null },
+    });
+    board.client.listTasks.mockRejectedValueOnce(new ApiRequestError(503, 'Unavailable'));
+    await board.loader.resync();
+    board.replace(Array.from({ length: 260 }, (_, index) => task(index + 2)));
+    await board.loader.resync();
     expect(visibleTasks(board.getState(), 'pending')).toHaveLength(260);
     expect(board.getState().columns.pending.complete).toBe(true);
     board.loader.stop();

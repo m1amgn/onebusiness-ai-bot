@@ -40,7 +40,11 @@ features, since components cannot import api, even for types. App composes sessi
 and tasks; the board is keyed by token so requests and state never mix accounts.
 Transport tests inject EventSource, sleep and random. Component tests use StrictMode
 and real timers; test/setup supplies browser layout/dialog stubs guarded for Node.
+Set window.innerWidth and dispatch resize to exercise layout changes in tests.
 The lint regression runs in Node from src/test/eslintRules.test.ts.
+
+Session capture consumes new hashchange links as well as the initial fragment.
+Cross-tab token removal keeps the rejected-link message in every active board.
 
 The task hook owns the client, stream, page loader and serialized per-card writes.
 Its synchronous state ref lets async chains see each action before React renders.

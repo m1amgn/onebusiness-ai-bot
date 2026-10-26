@@ -82,10 +82,24 @@ export const createApiClient = ({ token, fetchImpl = fetch }: ApiClientOptions) 
     await send(`/api/tasks/${String(id)}`, { method: 'DELETE', signal });
   };
 
-  const issueTicket = (signal?: AbortSignal) => {
-    const timeout = AbortSignal.timeout(10_000);
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    return request('/api/realtime/tickets', { method: 'POST', signal: combined }, zRealtimeTicket);
+  const issueTicket = async (signal?: AbortSignal) => {
+    const controller = new AbortController();
+    const handleAbort = (): void => {
+      controller.abort();
+    };
+    const timeout = setTimeout(handleAbort, 10_000);
+    if (signal?.aborted) handleAbort();
+    else signal?.addEventListener('abort', handleAbort, { once: true });
+    try {
+      return await request(
+        '/api/realtime/tickets',
+        { method: 'POST', signal: controller.signal },
+        zRealtimeTicket,
+      );
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', handleAbort);
+    }
   };
 
   return { listTasks, changeStatus, deleteTask, issueTicket };

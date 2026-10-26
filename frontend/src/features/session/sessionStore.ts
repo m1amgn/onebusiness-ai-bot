@@ -8,7 +8,6 @@ type Options = {
 };
 
 // These values outlive a store discarded by StrictMode, including failed storage writes.
-let capturedFragment: string | null | undefined;
 let memorySnapshot: SessionSnapshot = { token: null, rejected: false };
 let storageBlocked = false;
 
@@ -45,47 +44,57 @@ export const createSessionStore = ({ storage, location, history }: Options) => {
   const handleStorage = (event: StorageEvent): void => {
     if (storageBlocked || (event.key !== null && event.key !== SESSION_TOKEN_STORAGE_KEY)) return;
     if (event.storageArea !== null && event.storageArea !== storage) return;
-    refreshSnapshot();
+    const token = readStoredToken();
+    updateSnapshot(
+      token,
+      token === null && (snapshot.rejected || (event.newValue === null && snapshot.token !== null)),
+    );
+  };
+
+  const captureFragment = (): void => {
+    const token = new URLSearchParams(location.hash.slice(1)).get('token') || null;
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    if (token === null) {
+      refreshSnapshot();
+      return;
+    }
+    if (storage && !storageBlocked) {
+      try {
+        storage.setItem(SESSION_TOKEN_STORAGE_KEY, token);
+      } catch {
+        storageBlocked = true;
+      }
+    }
+    updateSnapshot(token);
   };
 
   const subscribe = (listener: () => void): (() => void) => {
     listeners.add(listener);
-    if (listeners.size === 1 && !storageBlocked) {
-      window.addEventListener('storage', handleStorage);
-      refreshSnapshot();
+    if (listeners.size === 1) {
+      window.addEventListener('hashchange', captureFragment);
+      if (!storageBlocked) window.addEventListener('storage', handleStorage);
+      captureFragment();
     }
     return () => {
       listeners.delete(listener);
-      if (listeners.size === 0) window.removeEventListener('storage', handleStorage);
+      if (listeners.size === 0) {
+        window.removeEventListener('storage', handleStorage);
+        window.removeEventListener('hashchange', captureFragment);
+      }
     };
   };
 
   const capture = (): SessionSnapshot => {
     if (captured) return snapshot;
     captured = true;
-    if (capturedFragment === undefined) {
-      capturedFragment = new URLSearchParams(location.hash.slice(1)).get('token') || null;
-      if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-      if (capturedFragment !== null) {
-        if (storage && !storageBlocked) {
-          try {
-            storage.setItem(SESSION_TOKEN_STORAGE_KEY, capturedFragment);
-          } catch {
-            storageBlocked = true;
-          }
-        }
-        updateSnapshot(capturedFragment);
-        return snapshot;
-      }
-    }
-    refreshSnapshot();
+    captureFragment();
     return snapshot;
   };
 
   const clearIfCurrent = (token: string): void => {
     const current = readStoredToken();
     if (current !== token) {
-      updateSnapshot(current, current === snapshot.token && snapshot.rejected);
+      updateSnapshot(current, current === null && (snapshot.token === token || snapshot.rejected));
       return;
     }
     if (storage && !storageBlocked) {

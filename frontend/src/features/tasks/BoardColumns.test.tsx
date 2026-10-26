@@ -60,7 +60,7 @@ test('accepts typed known cards into a different displayed column and rejects ot
   handlers.state.byId.set(1, task(1));
   handlers.state.byId.set(2, task(2));
   handlers.state.byId.set(3, task(3));
-  handlers.state.moves.set(1, { to: 'in_progress', inFlight: true });
+  handlers.state.moves.set(1, { to: 'in_progress' });
   handlers.state.deleted.add(2);
   handlers.state.deleting.add(3);
   render(<BoardColumns {...handlers} />);

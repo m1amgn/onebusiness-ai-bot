@@ -74,7 +74,6 @@ export const useTaskBoard = (token: string, onUnauthorized: (token: string) => v
         return;
       }
       activeMoves.add(id);
-      apply({ type: 'move.started', id });
       try {
         const task = await client.changeStatus(id, move.to, lifetime.signal);
         if (!active()) return;
@@ -122,7 +121,6 @@ export const useTaskBoard = (token: string, onUnauthorized: (token: string) => v
         )
           return;
         apply({ type: 'move.target', id, to });
-        if (activeMoves.has(id)) apply({ type: 'move.started', id });
         void pumpMove(id);
       },
       handleDelete: (id) => {

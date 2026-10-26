@@ -4,6 +4,55 @@ import { boardFrontier, boardReducer, displayedStatus, visibleTasks } from './ta
 import { harness, page, task } from './taskState.testHelpers';
 
 describe('board rules', () => {
+  it('retains the newest known row when an older logged event is absent from resync pages', () => {
+    const board = harness();
+    const newest = task(10, 'completed', { updated_at: '2026-10-26T08:00:02Z' });
+    board.dispatch({ type: 'local.updated', task: newest });
+    board.dispatch({
+      type: 'resync.started',
+      epoch: 1,
+      frontier: { inbound_message_id: 10, position: 0 },
+    });
+    board.dispatch({ type: 'task.updated', task: task(10) });
+    board.dispatch({
+      type: 'resync.completed',
+      epoch: 1,
+      pages: { pending: page(), in_progress: page(), completed: page() },
+    });
+    expect(board.getState().byId.get(10)).toEqual(newest);
+  });
+  it('keeps event moves and unknown page rows below a non-null column edge in key order', () => {
+    const board = harness();
+    board.dispatch({ type: 'page.started', status: 'completed', epoch: 0, requestId: 1 });
+    board.dispatch({
+      type: 'page.received',
+      status: 'completed',
+      epoch: 0,
+      requestId: 1,
+      cursor: null,
+      page: page([task(50, 'completed')], 'older'),
+    });
+    board.dispatch({ type: 'local.updated', task: task(10) });
+    board.dispatch({
+      type: 'task.updated',
+      task: task(10, 'completed', { updated_at: '2026-10-26T08:00:01Z' }),
+    });
+    expect(board.getState().columns.completed.edge).toEqual({
+      inbound_message_id: 50,
+      position: 0,
+    });
+    expect(visibleTasks(board.getState(), 'completed').map(({ id }) => id)).toEqual([50, 10]);
+    board.dispatch({ type: 'page.started', status: 'completed', epoch: 0, requestId: 2 });
+    board.dispatch({
+      type: 'page.received',
+      status: 'completed',
+      epoch: 0,
+      requestId: 2,
+      cursor: 'older',
+      page: page([task(30, 'completed')], 'more'),
+    });
+    expect(visibleTasks(board.getState(), 'completed').map(({ id }) => id)).toEqual([50, 30, 10]);
+  });
   it('merges strictly newer microseconds and sorts message descending, position ascending', () => {
     const board = harness();
     const old = task(1);
@@ -56,7 +105,6 @@ describe('board rules', () => {
     const row = task(1);
     board.dispatch({ type: 'local.updated', task: row });
     board.dispatch({ type: 'move.target', id: 1, to: 'in_progress' });
-    board.dispatch({ type: 'move.started', id: 1 });
     board.dispatch({ type: 'move.target', id: 1, to: 'completed' });
     board.dispatch({
       type: 'local.updated',
@@ -64,9 +112,8 @@ describe('board rules', () => {
     });
     board.dispatch({ type: 'move.finished', id: 1 });
     expect(displayedStatus(board.getState(), row)).toBe('completed');
-    expect(board.getState().moves.get(1)).toEqual({ to: 'completed', inFlight: false });
+    expect(board.getState().moves.get(1)).toEqual({ to: 'completed' });
     expect(visibleTasks(board.getState(), 'completed')).toHaveLength(1);
-    board.dispatch({ type: 'move.started', id: 1 });
     board.dispatch({
       type: 'local.updated',
       task: task(1, 'completed', { updated_at: '2026-10-26T08:00:02Z' }),
@@ -99,7 +146,6 @@ describe('board rules', () => {
     const board = harness();
     board.dispatch({ type: 'local.updated', task: task(1) });
     board.dispatch({ type: 'move.target', id: 1, to: 'in_progress' });
-    board.dispatch({ type: 'move.started', id: 1 });
     board.dispatch({ type: 'move.target', id: 1, to: 'completed' });
     board.dispatch({ type: 'delete.started', id: 1 });
     expect(board.getState().deleting.has(1)).toBe(true);

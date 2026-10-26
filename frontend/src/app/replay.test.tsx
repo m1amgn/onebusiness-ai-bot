@@ -236,8 +236,8 @@ test('replays accepted owner outcomes V1–V7 and V10 through App', { timeout: 6
     'V10',
     {
       signedInBeforeTicket: true,
-      activeRejected: true,
-      activeInstructions: true,
+      rejected: [true, true],
+      instructions: [true, true],
       cardCounts: [0, 0],
       storedSession: null,
       ticketDenied: true,
@@ -252,17 +252,22 @@ test('replays accepted owner outcomes V1–V7 and V10 through App', { timeout: 6
       );
       await waitFor(
         () => {
-          expect(within(first).getByText('This link no longer works.')).toBeInTheDocument();
-          for (const board of boards)
+          for (const board of boards) {
+            expect(within(board).getByText('This link no longer works.')).toBeInTheDocument();
             expect(within(board).queryAllByRole('article')).toHaveLength(0);
+          }
         },
         { timeout: 5_000 },
       );
       return {
         signedInBeforeTicket,
-        activeRejected: within(first).queryByText('This link no longer works.') !== null,
-        activeInstructions:
-          within(first).queryByText('Send /dashboard to the bot for a new link') !== null,
+        rejected: boards.map(
+          (board) => within(board).queryByText('This link no longer works.') !== null,
+        ),
+        instructions: boards.map(
+          (board) =>
+            within(board).queryByText('Send /dashboard to the bot for a new link') !== null,
+        ),
         cardCounts: boards.map((board) => within(board).queryAllByRole('article').length),
         storedSession: localStorage.getItem('dashboardToken'),
         ticketDenied: server.requests.deniedTickets > 0,

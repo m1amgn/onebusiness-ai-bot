@@ -6,17 +6,38 @@ configure({ reactStrictMode: true });
 afterEach(cleanup);
 
 if (typeof window !== 'undefined') {
-  window.matchMedia = (media: string): MediaQueryList => ({
-    media,
-    matches: true,
-    onchange: null,
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- The native stub includes legacy MediaQueryList methods.
-    addListener: () => undefined,
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- The native stub includes legacy MediaQueryList methods.
-    removeListener: () => undefined,
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
-    dispatchEvent: () => true,
+  const matchesWidth = (media: string): boolean => {
+    const minimum = /min-width:\s*(\d+)px/.exec(media)?.[1];
+    const maximum = /max-width:\s*(\d+)px/.exec(media)?.[1];
+    return (
+      (!minimum || window.innerWidth >= Number(minimum)) &&
+      (!maximum || window.innerWidth <= Number(maximum))
+    );
+  };
+  const queries = new Map<string, MediaQueryList>();
+  window.matchMedia = (media: string): MediaQueryList => {
+    const existing = queries.get(media);
+    if (existing) return existing;
+    const query = Object.assign(new EventTarget(), {
+      media,
+      matches: matchesWidth(media),
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+    });
+    Object.defineProperty(query, 'matches', { get: () => matchesWidth(media) });
+    queries.set(media, query);
+    return query;
+  };
+  window.addEventListener('resize', () => {
+    for (const query of queries.values()) {
+      query.dispatchEvent(
+        Object.assign(new Event('change'), { matches: query.matches, media: query.media }),
+      );
+    }
+  });
+  afterEach(() => {
+    queries.clear();
   });
   globalThis.ResizeObserver = class implements ResizeObserver {
     observe = (): void => undefined;

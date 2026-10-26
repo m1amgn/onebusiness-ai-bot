@@ -30,6 +30,20 @@ const pendingSetup = () => {
 };
 
 describe('page request races', () => {
+  it('blocks load-more during resync even when its column has a usable cursor', async () => {
+    const board = pendingSetup();
+    const initial = board.loader.initialLoad();
+    board.resolve(0, page([task(50)], 'older'));
+    await initial;
+    const sync = board.loader.resync();
+    expect(board.getState().columns.pending.cursor).toBe('older');
+    const more = board.loader.loadMore('pending');
+    expect(board.listTasks).toHaveBeenCalledTimes(6);
+    board.resolve(3, page([task(50)]));
+    await sync;
+    await more;
+    board.loader.stop();
+  });
   it('G2 ignores a delayed initial page after resync deletes a task before subscription', async () => {
     const board = pendingSetup();
     const initial = board.loader.initialLoad();
@@ -67,9 +81,7 @@ describe('page request races', () => {
     board.dispatch({ type: 'task.created', task: task(3) });
     board.dispatch({ type: 'task.created', task: task(1) });
     board.dispatch({ type: 'move.target', id: 8, to: 'completed' });
-    board.dispatch({ type: 'move.started', id: 8 });
     const sync = board.loader.resync();
-    await board.loader.loadMore('pending');
     expect(board.listTasks).toHaveBeenCalledTimes(3);
     board.dispatch({ type: 'task.created', task: task(20) });
     board.dispatch({ type: 'task.deleted', task_id: 10 });
@@ -85,7 +97,7 @@ describe('page request races', () => {
     expect(board.getState().byId.has(1)).toBe(false);
     expect(board.getState().arrived.has(1)).toBe(false);
     expect(board.getState().arrived.has(20)).toBe(true);
-    expect(board.getState().moves.get(8)?.inFlight).toBe(true);
+    expect(board.getState().moves.get(8)?.to).toBe('completed');
     board.loader.stop();
   });
 

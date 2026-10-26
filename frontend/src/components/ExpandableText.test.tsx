@@ -9,6 +9,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test('offers expansion when the loaded font makes the clamped text overflow', async () => {
+  let finishFont!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    finishFont = resolve;
+  });
+  const fonts = Object.getOwnPropertyDescriptor(document, 'fonts');
+  Object.defineProperty(document, 'fonts', { configurable: true, value: { ready } });
+  let height = 60;
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => height);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60);
+  try {
+    render(<ExpandableText text="Description sized with the fallback font." />);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    height = 100;
+    await act(async () => {
+      finishFont();
+      await ready;
+    });
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeInTheDocument();
+  } finally {
+    if (fonts) Object.defineProperty(document, 'fonts', fonts);
+    else Reflect.deleteProperty(document, 'fonts');
+  }
+});
+
 test('measures overflow, expands the whole description, and collapses it', async () => {
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(100);
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60);

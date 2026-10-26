@@ -212,7 +212,7 @@ describe('useTaskBoard actions', { timeout: 15_000 }, () => {
       board.result.current.handleMove(1, 'completed');
     });
     expect(board.requests('PATCH')).toHaveLength(1);
-    expect(board.result.current.state.moves.get(1)?.inFlight).toBe(true);
+    expect(board.status()).toBe('completed');
     await reply(patch, responseTask('in_progress'));
     expect(board.requests('PATCH')).toHaveLength(2);
     await reply(second, responseTask('completed', '2026-10-26T08:00:00.000002Z'));
