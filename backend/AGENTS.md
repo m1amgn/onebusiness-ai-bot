@@ -5,6 +5,14 @@ Use `uv` from the root or `uv --directory backend`; never bare pip.
 
 ## Layers
 
+Voice acceptance lives in application/accept_voice.py. It commits the job before
+acknowledging, stores the acknowledgement in a second unit of work, then enqueues
+and stamps it in a third. No transaction spans Telegram or the broker. Metadata
+failures after acceptance are logged safely; the recovery sweep owns failed sends.
+Bot and notification replies share application/replies.py. The seed and bot use
+dashboard_link for the fragment URL. Telegram fakes reject calls inside a unit of
+work using a task-local context variable.
+
 `domain` owns entities and Protocol ports. `application` depends on domain only.
 `infrastructure` implements ports and wraps clients. It never imports application.
 `entrypoints` owns composition roots. Import-linter enforces these directions

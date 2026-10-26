@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from taskbot.domain.errors import EnqueueError
 from taskbot.domain.events import DomainEvent
 from taskbot.domain.jobs import NotificationJob, TicketClaims, TranscriptionJob
 from tests.fakes.calls import Calls
@@ -9,11 +10,14 @@ from tests.fakes.calls import Calls
 class FakeJobQueue:
     calls: Calls = field(default_factory=Calls)
     jobs: list[tuple[TranscriptionJob | NotificationJob, int]] = field(default_factory=list)
+    fail: bool = False
 
     async def enqueue(
         self, job: TranscriptionJob | NotificationJob, *, delay_seconds: int = 0
     ) -> None:
         self.calls.items.append("queue.enqueue")
+        if self.fail:
+            raise EnqueueError("Synthetic broker failure")
         self.jobs.append((job, delay_seconds))
 
 

@@ -7,6 +7,7 @@ Real-store integration tests verify the storage constraints and concurrency wind
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar, Token
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -43,6 +44,8 @@ from taskbot.domain.voice_jobs import (
     classify_notification_refusal,
 )
 from tests.fakes.calls import Calls
+
+inside_unit_of_work: ContextVar[bool] = ContextVar("inside_unit_of_work", default=False)
 
 
 @dataclass
@@ -450,9 +453,11 @@ class FakeUnitOfWork:
     def __init__(self, store: FakeStore) -> None:
         self.store = store
         self.events: list[DomainEvent] = []
+        self._context_token: Token[bool] | None = None
 
     async def __aenter__(self) -> Self:
         await self.store.lock.acquire()
+        self._context_token = inside_unit_of_work.set(True)
         self.store.calls.items.append("uow.open")
         self.working = deepcopy(self.store.state)
         self.users = FakeUserRepository(self.working, self.store)
@@ -482,3 +487,5 @@ class FakeUnitOfWork:
         self.events.clear()
         self.store.calls.items.append("uow.close")
         self.store.lock.release()
+        if self._context_token is not None:
+            inside_unit_of_work.reset(self._context_token)

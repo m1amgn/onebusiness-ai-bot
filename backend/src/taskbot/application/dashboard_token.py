@@ -9,6 +9,10 @@ from taskbot.domain.ports.services import Clock, TokenGenerator, TokenHasher
 from taskbot.domain.users import AuthenticatedUser, TelegramIdentity
 
 
+def dashboard_link(base_url: str, token: str) -> str:
+    return f"{base_url}/#token={token}"
+
+
 @dataclass(frozen=True, slots=True)
 class IssuedToken:
     user_id: int
