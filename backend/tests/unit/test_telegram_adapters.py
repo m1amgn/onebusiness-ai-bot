@@ -2,6 +2,7 @@ import asyncio
 import json
 import traceback
 from collections import deque
+from collections.abc import Awaitable
 
 import pytest
 from aiogram import Bot
@@ -26,6 +27,7 @@ async def test_notifier_sends_plain_reply_and_returns_message_id() -> None:
         assert await AiogramUserNotifier(bot).send_reply(7, "A <title>", reply_to_message_id=3) == 1
     payload = session.payloads[0]
     assert payload["text"] == "A <title>"
+    assert "parse_mode" not in payload
     assert payload["reply_parameters"] == {"message_id": 3, "allow_sending_without_reply": True}
     assert session.timeouts == [10]
 
@@ -35,6 +37,7 @@ async def test_notifier_sends_plain_reply_and_returns_message_id() -> None:
     [
         (400, "Bad Request: message to edit not found", MessageGoneError),
         (400, "Bad Request: message can't be edited", MessageGoneError),
+        (400, "Bad Request: MESSAGE To Edit Not FOUND", MessageGoneError),
         (400, "Bad Request: synthetic invalid input", NotificationError),
         (403, "Forbidden: bot was blocked", RecipientBlockedError),
         (429, "Too Many Requests: synthetic", RetryAfterError),
@@ -79,7 +82,7 @@ async def test_not_modified_is_success() -> None:
                 (
                     400,
                     '{"ok":false,"error_code":400,'
-                    '"description":"Bad Request: message is not modified"}',
+                    '"description":"Bad Request: MESSAGE IS NOT MODIFIED"}',
                 )
             ]
         )
@@ -100,6 +103,57 @@ async def test_notifier_maps_transport_failures(error: Exception) -> None:
     async with Bot("123456:synthetic", session=session) as bot:
         with pytest.raises(NotificationError):
             await AiogramUserNotifier(bot).send_reply(7, "title")
+
+
+@pytest.mark.parametrize("method", ["sendMessage", "editMessageText", "getFile", "download"])
+async def test_raw_decode_errors_stay_inside_the_telegram_ports(method: str) -> None:
+    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
+    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
+    from tests.fakes.telegram_session import FakeTelegramSession
+
+    session = FakeTelegramSession()
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "private response")
+    if method == "download":
+        session.stream_error = error
+    else:
+        session.request_errors[method] = error
+    async with Bot("123456:synthetic", session=session) as bot:
+        expected = (
+            VoiceFileUnavailableError if method in {"getFile", "download"} else NotificationError
+        )
+        operation: Awaitable[object]
+        if method == "sendMessage":
+            operation = AiogramUserNotifier(bot).send_reply(7, "title")
+        elif method == "editMessageText":
+            operation = AiogramUserNotifier(bot).edit_message(7, 1, "title")
+        else:
+            operation = AiogramVoiceFileSource(bot).fetch("file", max_bytes=10)
+        with pytest.raises(expected) as caught:
+            await operation
+    assert str(caught.value) == "UnicodeDecodeError"
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("method", ["sendMessage", "editMessageText", "getFile"])
+async def test_telegram_ports_propagate_cancellation(method: str) -> None:
+    from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
+    from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
+    from tests.fakes.telegram_session import FakeTelegramSession
+
+    session = FakeTelegramSession()
+    session.request_gates[method] = asyncio.Event()
+    async with Bot("123456:synthetic", session=session) as bot:
+        task: asyncio.Task[object]
+        if method == "sendMessage":
+            task = asyncio.create_task(AiogramUserNotifier(bot).send_reply(7, "title"))
+        elif method == "editMessageText":
+            task = asyncio.create_task(AiogramUserNotifier(bot).edit_message(7, 1, "title"))
+        else:
+            task = asyncio.create_task(AiogramVoiceFileSource(bot).fetch("file", max_bytes=10))
+        await session.started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 async def test_telegram_file_too_big_becomes_size_refusal() -> None:

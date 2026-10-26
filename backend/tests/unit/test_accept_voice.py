@@ -145,6 +145,41 @@ async def test_failed_ack_still_enqueues_and_duplicate_resumes_only_until_ack_is
     assert len(queue.jobs) == 2
 
 
+@pytest.mark.parametrize("operation", ["ack", "enqueue"])
+async def test_unexpected_adapter_error_after_acceptance_is_contained(
+    operation: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from taskbot.application.accept_voice import (
+        AcceptVoiceCommand,
+        AcceptVoiceMessage,
+        VoiceAccepted,
+    )
+    from tests.fakes.telegram import FakeUserNotifier
+
+    store, clock, queue = setup_voice()
+    notifier = FakeUserNotifier(
+        failures={1: RuntimeError("private response")} if operation == "ack" else {}
+    )
+    if operation == "enqueue":
+
+        async def fail(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("private broker response")
+
+        monkeypatch.setattr(queue, "enqueue", fail)
+    result = await AcceptVoiceMessage(
+        store, RegisterOrGetUser(store, clock), notifier, queue, clock
+    ).execute(
+        AcceptVoiceCommand(
+            TelegramIdentity(7, "Synthetic"), MessageRef(7, 1), "file", "unique", 1, None
+        )
+    )
+    assert isinstance(result, VoiceAccepted)
+    assert result.acknowledged == (operation != "ack")
+    assert result.enqueued == (operation != "enqueue")
+    assert len(queue.jobs) == (operation != "enqueue")
+
+
 @pytest.mark.parametrize(
     "status", [VoiceJobStatus.PROCESSING, VoiceJobStatus.DONE, VoiceJobStatus.FAILED]
 )

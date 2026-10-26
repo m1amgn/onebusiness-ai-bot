@@ -3,8 +3,7 @@ from collections.abc import Buffer
 from io import BytesIO
 
 from aiogram import Bot
-from aiogram.exceptions import AiogramError, TelegramBadRequest
-from aiohttp import ClientError
+from aiogram.exceptions import TelegramBadRequest
 
 from taskbot.domain.errors import VoiceFileTooLargeError, VoiceFileUnavailableError
 
@@ -36,9 +35,15 @@ class AiogramVoiceFileSource:
                 with CappedBuffer(max_bytes) as buffer:
                     await self._bot.download_file(file.file_path, destination=buffer)
                     return buffer.getvalue()
+        except VoiceFileTooLargeError, VoiceFileUnavailableError:
+            raise
         except TelegramBadRequest as error:
             if "file is too big" in error.message.lower():
-                raise VoiceFileTooLargeError(type(error).__name__) from None
-            raise VoiceFileUnavailableError(type(error).__name__) from None
-        except (AiogramError, TimeoutError, ClientError) as error:
-            raise VoiceFileUnavailableError(type(error).__name__) from None
+                mapped: VoiceFileTooLargeError | VoiceFileUnavailableError = VoiceFileTooLargeError(
+                    type(error).__name__
+                )
+            else:
+                mapped = VoiceFileUnavailableError(type(error).__name__)
+        except Exception as error:
+            mapped = VoiceFileUnavailableError(type(error).__name__)
+        raise mapped

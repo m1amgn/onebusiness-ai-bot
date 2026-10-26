@@ -1,12 +1,10 @@
 from aiogram import Bot
 from aiogram.exceptions import (
-    AiogramError,
     TelegramBadRequest,
     TelegramForbiddenError,
     TelegramRetryAfter,
 )
 from aiogram.types import ReplyParameters
-from aiohttp import ClientError
 
 from taskbot.domain.errors import (
     DomainError,
@@ -39,16 +37,18 @@ class AiogramUserNotifier:
         )
         try:
             message = await self._bot.send_message(
-                chat_id, text, reply_parameters=reply, request_timeout=10
+                chat_id, text, reply_parameters=reply, parse_mode=None, request_timeout=10
             )
-        except (AiogramError, TimeoutError, ClientError) as error:
-            raise notification_error(error) from None
-        return message.message_id
+        except Exception as error:
+            mapped = notification_error(error)
+        else:
+            return message.message_id
+        raise mapped
 
     async def edit_message(self, chat_id: int, message_id: int, text: str) -> None:
         try:
             await self._bot.edit_message_text(
-                text, chat_id=chat_id, message_id=message_id, request_timeout=10
+                text, chat_id=chat_id, message_id=message_id, parse_mode=None, request_timeout=10
             )
         except TelegramBadRequest as error:
             description = error.message.lower()
@@ -58,7 +58,11 @@ class AiogramUserNotifier:
                 phrase in description
                 for phrase in ("message to edit not found", "message can't be edited")
             ):
-                raise MessageGoneError(type(error).__name__) from None
-            raise NotificationError(type(error).__name__) from None
-        except (AiogramError, TimeoutError, ClientError) as error:
-            raise notification_error(error) from None
+                mapped: DomainError = MessageGoneError(type(error).__name__)
+            else:
+                mapped = NotificationError(type(error).__name__)
+        except Exception as error:
+            mapped = notification_error(error)
+        else:
+            return
+        raise mapped

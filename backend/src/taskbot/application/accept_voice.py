@@ -4,7 +4,6 @@ from typing import Literal
 
 from taskbot.application.register_user import RegisterOrGetUser
 from taskbot.application.replies import VOICE_ACK
-from taskbot.domain.errors import NOTIFIER_ERRORS, EnqueueError
 from taskbot.domain.jobs import TranscriptionJob
 from taskbot.domain.limits import MAX_VOICE_BYTES, MAX_VOICE_SECONDS
 from taskbot.domain.messages import MessageRef
@@ -95,7 +94,7 @@ class AcceptVoiceMessage:
             ack = await self._notifier.send_reply(
                 job.ref.chat_id, VOICE_ACK, reply_to_message_id=job.ref.message_id
             )
-        except NOTIFIER_ERRORS as error:
+        except Exception as error:
             logger.warning("Voice acknowledgement failed (%s)", type(error).__name__)
             return False
         try:
@@ -111,7 +110,7 @@ class AcceptVoiceMessage:
     async def _enqueue(self, job_id: int) -> bool:
         try:
             await self._queue.enqueue(TranscriptionJob(voice_job_id=job_id))
-        except EnqueueError as error:
+        except Exception as error:
             logger.warning("Voice enqueue failed (%s)", type(error).__name__)
             return False
         try:
