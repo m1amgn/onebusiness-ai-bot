@@ -284,10 +284,12 @@ TokenRedactionFilter belongs on every root logging handler.
 
 The offline replay is tests/acceptance/replay_s4.py with TASKBOT_ENV_FILE=/dev/null.
 Its frozen B1-B19 expectations are s4_expected.json. tests/bot.py owns the shared
-synthetic settings, update builder and handler/voice fixtures. Canonical
+synthetic settings, update builder and handler/voice fixtures.
 Use task_created_text for degraded success replies and worker notification edits.
-tests/bot_runtime.py provides
-root spies over real PostgreSQL, Redis and the producer, with a fake Telegram
+Cold bot CLI/collection/replay subprocess checks allow 120 seconds for SDK imports.
+The held-lock subprocess fixture renews its lease during that startup window.
+tests/bot_runtime.py provides root spies over real PostgreSQL, Redis and the
+producer, with a fake Telegram
 transport and extractor. Root integration tests use per-session databases and
 namespaces, never development rows. A live check uses separate test credentials
 typed into this worktree's untracked dotenv file and is recorded in the README.

@@ -1,7 +1,9 @@
+import asyncio
 import os
 import sys
 from pathlib import Path
 
+from taskbot.infrastructure.redis.bot_lock import POLL_LOCK_KEY, LockKeeper, PollingLock
 from taskbot.infrastructure.redis.client import create_redis_client
 from tests.processes import run_process
 from tests.redis_sessions import RedisSession
@@ -12,18 +14,18 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 async def test_held_polling_lock_exits_cleanly_without_contacting_telegram(
     redis_session: RedisSession,
 ) -> None:
-    from taskbot.infrastructure.redis.bot_lock import PollingLock
-
     namespace = redis_session.child()
     async with create_redis_client(redis_session.redis_url) as client:
         lock = PollingLock(client, namespace)
         assert await lock.acquire()
+        keeper = asyncio.create_task(LockKeeper(lock).run())
         try:
             result = await run_process(
                 sys.executable,
                 "-m",
                 "taskbot.entrypoints.bot",
                 cwd=BACKEND_ROOT,
+                timeout_seconds=120,  # Include cold SDK imports on a shared host.
                 env=os.environ
                 | {
                     "TASKBOT_ENV_FILE": "/dev/null",
@@ -39,20 +41,21 @@ async def test_held_polling_lock_exits_cleanly_without_contacting_telegram(
             assert "Another bot instance holds the polling lock" in result.stderr
             assert "Traceback" not in result.stderr
         finally:
+            keeper.cancel()
+            await asyncio.gather(keeper, return_exceptions=True)
             await lock.release()
 
 
 async def test_unavailable_database_releases_the_lock_before_exit(
     redis_session: RedisSession,
 ) -> None:
-    from taskbot.infrastructure.redis.bot_lock import POLL_LOCK_KEY
-
     namespace = redis_session.child()
     result = await run_process(
         sys.executable,
         "-m",
         "taskbot.entrypoints.bot",
         cwd=BACKEND_ROOT,
+        timeout_seconds=120,  # Include cold SDK imports on a shared host.
         env=os.environ
         | {
             "TASKBOT_ENV_FILE": "/dev/null",

@@ -13,6 +13,7 @@ async def test_malformed_bot_token_exits_without_exposing_its_value() -> None:
         "-m",
         "taskbot.entrypoints.bot",
         cwd=BACKEND_ROOT,
+        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
         env=os.environ
         | {
             "TASKBOT_ENV_FILE": "/dev/null",
@@ -33,6 +34,7 @@ async def test_unreachable_redis_stops_before_telegram_is_constructed() -> None:
         "-m",
         "taskbot.entrypoints.bot",
         cwd=BACKEND_ROOT,
+        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
         env=os.environ
         | {
             "TASKBOT_ENV_FILE": "/dev/null",

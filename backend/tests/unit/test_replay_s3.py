@@ -35,6 +35,7 @@ async def test_read_only_s3_replay_checks_token_roles_and_internal_user_channel(
         sys.executable,
         "tests/acceptance/replay_s3.py",
         cwd=BACKEND_ROOT,
+        timeout_seconds=120,  # Cold SDK imports can be slow on a shared host.
         env=dict(
             os.environ,
             TASKBOT_ENV_FILE=str(dotenv),
