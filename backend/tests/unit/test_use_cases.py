@@ -33,7 +33,7 @@ async def test_create_duplicate_order_status_and_ownership() -> None:
     store = FakeStore(calls=calls)
     extractor = FakeExtractor(
         Extraction(
-            tasks=(TaskDraft(title="first"), TaskDraft(title="second")),
+            task=TaskDraft(title="first"),
             extractor=ExtractorName.HEURISTIC,
             degraded=False,
         ),
@@ -42,13 +42,13 @@ async def test_create_duplicate_order_status_and_ownership() -> None:
     register = RegisterOrGetUser(store, clock)
     create = CreateTasksFromMessage(store, extractor, register, clock)
     command = CreateTasksCommand(
-        TelegramIdentity(7, "A"), MessageRef(7, 1), MessageKind.TEXT, "two tasks"
+        TelegramIdentity(7, "A"), MessageRef(7, 1), MessageKind.TEXT, "one task"
     )
     first = await create.execute(command)
     assert not isinstance(first, DuplicateMessage)
     assert calls.items.index("extract") < calls.items.index("uow.open")
-    assert len(first.events) == 2
-    assert [t.position for t in first.tasks] == [0, 1]
+    assert len(first.events) == 1
+    assert [t.position for t in first.tasks] == [0]
     again = await create.execute(command)
     assert isinstance(again, DuplicateMessage)
     assert again.message_id == first.message.id
@@ -124,9 +124,7 @@ async def test_empty_text_never_extracts_or_opens_transaction() -> None:
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
     store = FakeStore(calls=calls)
     extractor = FakeExtractor(
-        Extraction(
-            tasks=(TaskDraft(title="x"),), extractor=ExtractorName.HEURISTIC, degraded=False
-        ),
+        Extraction(task=TaskDraft(title="x"), extractor=ExtractorName.HEURISTIC, degraded=False),
         calls,
     )
     create = CreateTasksFromMessage(store, extractor, RegisterOrGetUser(store, clock), clock)
@@ -142,7 +140,7 @@ async def test_composed_creation_returns_no_events_and_rolls_back_on_failure() -
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
     store = FakeStore()
     extraction = Extraction(
-        tasks=(TaskDraft(title="Call home"),), extractor=ExtractorName.HEURISTIC, degraded=False
+        task=TaskDraft(title="Call home"), extractor=ExtractorName.HEURISTIC, degraded=False
     )
     create = CreateTasksFromMessage(
         store, FakeExtractor(extraction, store.calls), RegisterOrGetUser(store, clock), clock
@@ -219,7 +217,7 @@ async def test_standalone_creation_rolls_back_failed_writes(failure: str) -> Non
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
     store = FakeStore(fail_on=failure)
     extraction = Extraction(
-        tasks=(TaskDraft(title="Call home"),), extractor=ExtractorName.HEURISTIC, degraded=False
+        task=TaskDraft(title="Call home"), extractor=ExtractorName.HEURISTIC, degraded=False
     )
     create = CreateTasksFromMessage(
         store, FakeExtractor(extraction, store.calls), RegisterOrGetUser(store, clock), clock

@@ -87,6 +87,6 @@ class CreateTasksFromMessage:
             if existing is None:
                 raise RuntimeError("Conflicting message disappeared")
             return DuplicateMessage(existing.id)
-        tasks = await uow.tasks.add_many(user_id, message.id, extraction.tasks, now)
+        tasks = await uow.tasks.add_many(user_id, message.id, (extraction.task,), now)
         uow.record(*(TaskCreated(user_id=user_id, task=TaskView.from_task(task)) for task in tasks))
         return CreatedMessage(user_id, message, tasks)

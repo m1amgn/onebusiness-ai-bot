@@ -16,8 +16,10 @@ canonical cleaners and limits. VoiceJob transitions return a new entity or refus
 without mutation. Transcription and notification refusals have separate typed
 outcomes. A real task status change strictly increases updated_at by at least one
 microsecond; consumers must preserve that precision. Events exclude routing user_id
-from serialization. The heuristic extractor keeps exactly one task without language
-rules; the unbuilt Claude option returns that fallback marked degraded.
+from serialization. Extraction carries exactly one TaskDraft in its task field.
+The heuristic extractor keeps one task without language rules; the unbuilt Claude option returns
+that fallback marked degraded. Storage positions remain fixed by migration 0001;
+each new message creates its task at position 0.
 
 Test service doubles live in tests/fakes. The read-only owner-row replay is
 `uv run --locked --directory backend python tests/acceptance/replay_s2.py` from root.

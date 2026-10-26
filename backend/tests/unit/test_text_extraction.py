@@ -60,9 +60,8 @@ async def test_fallback_keeps_one_task(raw: str, title: str, description: str) -
     from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
 
     result = await HeuristicExtractor(degraded=True).extract(MessageText.parse(raw))
-    assert len(result.tasks) == 1
-    assert result.tasks[0].title == title
-    assert result.tasks[0].description == description
+    assert result.task.title == title
+    assert result.task.description == description
     assert result.extractor == "heuristic"
     assert result.degraded
 
@@ -82,13 +81,12 @@ async def test_fallback_is_total_on_accepted_hostile_text() -> None:
         except EmptyMessageError:
             continue
         result = await extractor.extract(text)
-        assert len(result.tasks) == 1
-        assert 1 <= len(result.tasks[0].title) <= 120
-        assert len(result.tasks[0].description) <= 2000
+        assert 1 <= len(result.task.title) <= 120
+        assert len(result.task.description) <= 2000
 
 
 def test_drafts_and_extraction_validate_their_boundary() -> None:
-    from taskbot.domain.extraction import ExtractedTasks, Extraction, ExtractorName, TaskDraft
+    from taskbot.domain.extraction import Extraction, ExtractorName, TaskDraft
 
     draft = TaskDraft(title=" a\x00\n b ", description="c\ud800")
     assert draft.title == "a b"
@@ -96,10 +94,11 @@ def test_drafts_and_extraction_validate_their_boundary() -> None:
     for title in ("", "a" * 121):
         with pytest.raises(ValidationError, match="title"):
             TaskDraft(title=title)
-    with pytest.raises(ValidationError, match="tasks"):
-        ExtractedTasks(tasks=[])
-    with pytest.raises(ValidationError, match="tasks"):
-        Extraction(tasks=(), extractor=ExtractorName.HEURISTIC, degraded=False)
+    extraction = Extraction(task=draft, extractor=ExtractorName.HEURISTIC, degraded=False)
+    assert extraction.task == draft
+    for invalid in ({}, {"tasks": (draft,)}, {"task": [draft]}):
+        with pytest.raises(ValidationError):
+            Extraction.model_validate({"extractor": "heuristic", "degraded": False, **invalid})
 
 
 async def test_factory_reports_unbuilt_model_as_degraded() -> None:

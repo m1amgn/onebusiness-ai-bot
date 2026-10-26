@@ -22,8 +22,8 @@ from taskbot.domain.extraction import ExtractorName
 from taskbot.domain.limits import (
     DESCRIPTION_MAX,
     MAX_NOTIFY_ATTEMPTS,
-    MAX_TASKS_PER_MESSAGE,
     MAX_TRANSCRIPTION_ATTEMPTS,
+    TASK_POSITION_SLOTS,
     TITLE_MAX,
 )
 from taskbot.domain.messages import MessageKind
@@ -119,7 +119,7 @@ class TaskRow(Base):
         CheckConstraint(
             f"char_length(description) <= {DESCRIPTION_MAX}", name="description_length"
         ),
-        CheckConstraint(f"position BETWEEN 0 AND {MAX_TASKS_PER_MESSAGE - 1}", name="position"),
+        CheckConstraint(f"position BETWEEN 0 AND {TASK_POSITION_SLOTS - 1}", name="position"),
     )
 
 

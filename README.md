@@ -68,7 +68,7 @@ yarn --silent dev:seed 1001 "Call home and ask about the weekend."
 
 Without text, the seed uses a built-in English sample. The current fallback keeps
 one task per message, cuts its title to 120 characters and keeps longer text in
-the description. Only the later model extractor splits a message into tasks.
+the description.
 The seed stores tasks and prints the token and `<WEB_BASE_URL>/#token=…` link.
 Every run rotates the token, so older links stop working. The dashboard and task
 API arrive later; this command currently verifies persistence without Telegram.

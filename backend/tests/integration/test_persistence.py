@@ -143,7 +143,7 @@ async def test_voice_composition_rolls_back_and_fences_stale_attempt(
     now = datetime(2026, 1, 1, tzinfo=UTC)
     clock = FakeClock(now)
     extraction = Extraction(
-        tasks=(TaskDraft(title="Call home"),), extractor=ExtractorName.HEURISTIC, degraded=False
+        task=TaskDraft(title="Call home"), extractor=ExtractorName.HEURISTIC, degraded=False
     )
     create = CreateTasksFromMessage(
         postgres_uows,
@@ -204,7 +204,7 @@ async def test_voice_composition_rolls_back_and_fences_stale_attempt(
 async def test_duplicate_text_creation_is_atomic(postgres_uows: UnitOfWorkFactory) -> None:
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
     extraction = Extraction(
-        tasks=(TaskDraft(title="Call home"),), extractor=ExtractorName.HEURISTIC, degraded=False
+        task=TaskDraft(title="Call home"), extractor=ExtractorName.HEURISTIC, degraded=False
     )
     create = CreateTasksFromMessage(
         postgres_uows,
