@@ -6,7 +6,7 @@ from typing import Protocol, Self
 from taskbot.domain.events import DomainEvent
 from taskbot.domain.extraction import TaskDraft
 from taskbot.domain.messages import InboundMessage, MessageRef, NewInboundMessage
-from taskbot.domain.tasks import Task
+from taskbot.domain.tasks import SourcedTask, Task, TaskCursor, TaskStatus
 from taskbot.domain.users import AuthenticatedUser, TelegramIdentity, UpsertedUser, User
 from taskbot.domain.voice_jobs import (
     AddedVoiceJob,
@@ -40,6 +40,8 @@ class InboundMessageRepository(Protocol):
 
     async def get(self, message_id: int) -> InboundMessage | None: ...
 
+    async def erase_text_if_unused(self, message_id: int) -> None: ...
+
 
 class TaskRepository(Protocol):
     async def add_many(
@@ -50,7 +52,11 @@ class TaskRepository(Protocol):
 
     async def save_status(self, task: Task) -> Task | None: ...
 
-    async def list_for_user(self, user_id: int) -> tuple[Task, ...]: ...
+    async def delete(self, task_id: int) -> None: ...
+
+    async def page_for_user(
+        self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, fetch: int
+    ) -> tuple[SourcedTask, ...]: ...
 
     async def list_for_message(self, inbound_message_id: int) -> tuple[Task, ...]: ...
 

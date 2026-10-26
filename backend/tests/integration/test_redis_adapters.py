@@ -36,6 +36,7 @@ def event_for(user_id: int) -> TaskCreated:
             id=1,
             inbound_message_id=1,
             position=0,
+            source_text="Synthetic source",
             title="Synthetic task",
             description="",
             status=TaskStatus.PENDING,

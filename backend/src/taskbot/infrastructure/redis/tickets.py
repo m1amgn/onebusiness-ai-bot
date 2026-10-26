@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from redis.asyncio import Redis
 
 from taskbot.domain.jobs import TicketClaims
+from taskbot.domain.limits import TICKET_TTL_SECONDS
 from taskbot.domain.ports.services import TokenGenerator
 from taskbot.infrastructure.redis.client import namespaced
 
@@ -14,7 +15,11 @@ TICKET_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
 
 class RedisTicketStore:
     def __init__(
-        self, client: Redis, tokens: TokenGenerator, namespace: str, ttl_seconds: int = 30
+        self,
+        client: Redis,
+        tokens: TokenGenerator,
+        namespace: str,
+        ttl_seconds: int = TICKET_TTL_SECONDS,
     ) -> None:
         self._client = client
         self._tokens = tokens

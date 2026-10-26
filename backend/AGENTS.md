@@ -55,8 +55,18 @@ execute results carry the events returned by commit. Publish only after commit w
 publish_events; publication failures are logged without undoing persisted work.
 CreateTasksFromMessage.within returns CreatedMessage or DuplicateMessage; standalone
 execute returns TasksCreated (which adds events) or DuplicateMessage. S5 composes the
-within result with voice-job completion in one unit of work. TaskView.from_task in
-domain/events.py converts an entity for events; entities do not import wire models.
+within result with voice-job completion in one unit of work.
+TaskView.from_task(task, source_text) in domain/events.py builds the shared wire
+shape. Task events include the stored source message text; entities do not import
+wire models. TaskRepository.page_for_user joins that text and orders by descending
+message id, then ascending position. ListTasks fetches one extra row and returns
+a cursor only when another page exists. Status changes return a TaskChange.view
+even when the requested status is unchanged.
+DeleteTask locks the owner-filtered task, deletes it and erases source text only
+when no task of that message remains, in one transaction. The retained message
+row prevents duplicate deliveries from recreating deleted tasks. Publish
+task.deleted only after commit. A task with NULL source text is an invariant
+failure in status changes and listing, not an empty tooltip.
 ChangeTaskStatus locks the owner-filtered task before reading the clock. Token
 authentication rejects malformed input before hashing and reads id/version together.
 Repository contracts in tests/contract run against both the transactional fake and
@@ -83,6 +93,9 @@ Task descriptions now allow 4096 characters (revision 0002); apply migrations
 before any process writes longer descriptions. Downgrading to 0001 requires no
 stored description over 2000 characters. Tests migrate only owned databases;
 they never advance the development head.
+Revision 0003 permits NULL message text after deletion. Its downgrade fills NULL
+with an empty string before restoring NOT NULL, preserving the duplicate guard.
+Migrate through 0003 before running the deletion API.
 
 Writing integration tests request database_url and clean_database. The session
 owns a taskbot_test_<unix-time>_<8 hex> database, migrates it and holds an anchor
@@ -150,6 +163,24 @@ deletion. No test assumes exclusive use. S1's tests only read.
 
 ## API schema and image
 
+The API factory registers routes without reading environment variables. Production
+lifespan validates ApiSettings and owns its SQL engine and Redis client. Injected
+ApiServices attach immediately, so ASGITransport tests need no lifespan runner.
+Every task/ticket route authenticates a bearer token; /health is public and
+/api/events authenticates a single-use ticket. Subscribe and recheck the database
+before stream headers. The request-scoped dependency owns subscription cleanup.
+SSE data carries the domain envelope with no event field; comments keep it alive.
+Task pages use opaque cursors and an optional status filter. Publish status events
+only after the use case commits. Keep the dev server's graceful shutdown timeout
+so open streams cannot block reload or Ctrl-C.
+DELETE returns 204 with no body or content type. The read-only acceptance replay
+checks W1-W8 with the heuristic and in-memory ports. It needs no database, Redis,
+Telegram or extraction credentials:
+
+```sh
+uv run --locked --directory backend python tests/acceptance/replay_s6.py
+```
+
 Change Pydantic response models, then run root `yarn api:schema`; generated
 TypeScript and Zod files are never edited by hand. `yarn api:check` detects drift.
 Route names become OpenAPI operation ids; choose unique names.
@@ -170,7 +201,13 @@ EventStreamGapError identifies a reconnect; Redis/timeout failures in adapter op
 become EventStreamError. Consumer-body exceptions retain their identity. Exit cleanup
 survives repeated cancellation within its operation timeouts, then propagates cancellation.
 A consumer closes its stream and refetches state after either stream error.
-Events received during the idle PING remain deliverable. S6 owns SSE and revocation checks.
+Events received during the idle PING remain deliverable. EventStreamError and
+EventStreamGapError live in domain/errors.py and remain re-exported by the adapter.
+RedisEventSubscriber implements the domain subscription port. StreamUserEvents
+checks token_version after subscription confirmation and every 20 monotonic
+seconds, including under traffic. Each database check has a five-second timeout;
+post-start failures close the stream, and cancellation propagates after cleanup.
+The API frames the resulting items as SSE.
 
 RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
 SeedSettings includes this mixin. The read-only owner replay is
@@ -240,3 +277,13 @@ closure. Celery serializes the fixup for spawned apps. Pool children and produce
 apps do not change their streams. Keep completed notify TERM/Ctrl-C logs free of
 bad-descriptor finalization errors; remove this compatibility fix when the pinned
 SDKs preserve the live wrapper themselves.
+
+## HTTP boundary details
+
+Runtime documentation routes are disabled; export the committed schema with
+yarn api:schema. FastAPI parses malformed JSON before bearer dependencies, so
+that combination returns 422 even without a token. Valid requests authenticate
+before application work. ApiError documents the common detail-string responses.
+Under an unthrottled event flood, FastAPI's keep-alive task can log
+BrokenResourceError during client abort; the subscription still closes. Ordinary
+traffic does not reproduce this dependency log noise.

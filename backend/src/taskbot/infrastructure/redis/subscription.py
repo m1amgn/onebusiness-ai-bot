@@ -1,21 +1,25 @@
 import asyncio
 from collections import deque
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 from redis.exceptions import RedisError
 
+from taskbot.domain.errors import EventStreamError as EventStreamError
+from taskbot.domain.errors import EventStreamGapError as EventStreamGapError
+from taskbot.domain.ports.messaging import EventSubscription
 from taskbot.infrastructure.redis.client import user_channel
 
 
-class EventStreamError(Exception):
-    """The event stream cannot be trusted; reconnect and refetch application state."""
+class RedisEventSubscriber:
+    def __init__(self, client: Redis, namespace: str) -> None:
+        self._client = client
+        self._namespace = namespace
 
-
-class EventStreamGapError(EventStreamError):
-    """Redis reconnected, so events may have been lost."""
+    def subscribe(self, user_id: int) -> AbstractAsyncContextManager[EventSubscription]:
+        return subscribe_user_events(self._client, self._namespace, user_id)
 
 
 class UserEventSubscription:

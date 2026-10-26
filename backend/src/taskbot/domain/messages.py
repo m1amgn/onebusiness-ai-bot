@@ -33,7 +33,7 @@ class InboundMessage:
     user_id: int
     ref: MessageRef
     kind: MessageKind
-    text: str
+    text: str | None
     extractor: ExtractorName
     degraded: bool
     created_at: datetime

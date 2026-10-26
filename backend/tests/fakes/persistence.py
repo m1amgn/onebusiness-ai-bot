@@ -23,7 +23,7 @@ from taskbot.domain.ports.persistence import (
     UserRepository,
     VoiceJobRepository,
 )
-from taskbot.domain.tasks import Task, TaskStatus
+from taskbot.domain.tasks import SourcedTask, Task, TaskCursor, TaskStatus
 from taskbot.domain.time import require_aware
 from taskbot.domain.users import AuthenticatedUser, TelegramIdentity, UpsertedUser, User
 from taskbot.domain.voice_jobs import (
@@ -51,6 +51,7 @@ class State:
     hashes: dict[int, str] = field(default_factory=dict)
     messages: dict[int, InboundMessage] = field(default_factory=dict)
     tasks: dict[int, Task] = field(default_factory=dict)
+    next_task_id: int = 1
     voice_jobs: dict[int, VoiceJob] = field(default_factory=dict)
 
 
@@ -150,6 +151,15 @@ class FakeMessageRepository(FakeRepository):
         self.called("messages.get")
         return self.state.messages.get(message_id)
 
+    async def erase_text_if_unused(self, message_id: int) -> None:
+        self.called("messages.erase_text_if_unused")
+        message = self.state.messages.get(message_id)
+        if message is None or any(
+            task.inbound_message_id == message_id for task in self.state.tasks.values()
+        ):
+            return
+        self.state.messages[message_id] = replace(message, text=None)
+
 
 class FakeTaskRepository(FakeRepository):
     async def add_many(
@@ -159,8 +169,9 @@ class FakeTaskRepository(FakeRepository):
         self.called("tasks.add_many")
         tasks = []
         for position, draft in enumerate(drafts):
+            task_id = max(self.state.next_task_id, next_id(self.state.tasks))
             task = Task(
-                next_id(self.state.tasks),
+                task_id,
                 user_id,
                 inbound_message_id,
                 position,
@@ -170,6 +181,7 @@ class FakeTaskRepository(FakeRepository):
                 now,
                 now,
             )
+            self.state.next_task_id = task_id + 1
             self.state.tasks[task.id] = task
             tasks.append(task)
         return tuple(tasks)
@@ -189,14 +201,35 @@ class FakeTaskRepository(FakeRepository):
         self.state.tasks[task.id] = saved
         return saved
 
-    async def list_for_user(self, user_id: int) -> tuple[Task, ...]:
-        self.called("tasks.list_for_user")
-        return tuple(
-            sorted(
-                (t for t in self.state.tasks.values() if t.user_id == user_id),
-                key=lambda t: (-t.inbound_message_id, t.position),
-            )
-        )
+    async def delete(self, task_id: int) -> None:
+        self.called("tasks.delete")
+        self.state.tasks.pop(task_id, None)
+
+    async def page_for_user(
+        self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, fetch: int
+    ) -> tuple[SourcedTask, ...]:
+        self.called("tasks.page_for_user")
+        tasks = sorted(
+            (
+                task
+                for task in self.state.tasks.values()
+                if task.user_id == user_id
+                and (status is None or task.status == status)
+                and (
+                    after is None
+                    or (-task.inbound_message_id, task.position)
+                    > (-after.inbound_message_id, after.position)
+                )
+            ),
+            key=lambda task: (-task.inbound_message_id, task.position),
+        )[:fetch]
+        result = []
+        for task in tasks:
+            source = self.state.messages[task.inbound_message_id].text
+            if source is None:
+                raise RuntimeError("Task has no source message text")
+            result.append(SourcedTask(task, source))
+        return tuple(result)
 
     async def list_for_message(self, inbound_message_id: int) -> tuple[Task, ...]:
         self.called("tasks.list_for_message")

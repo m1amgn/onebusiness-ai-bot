@@ -1,15 +1,15 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, delete, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from taskbot.domain.extraction import TaskDraft
-from taskbot.domain.tasks import Task, TaskStatus
+from taskbot.domain.tasks import SourcedTask, Task, TaskCursor, TaskStatus
 from taskbot.domain.time import require_aware
-from taskbot.infrastructure.sqlalchemy.mapping import task_from_row
+from taskbot.infrastructure.sqlalchemy.mapping import sourced_task_from_row, task_from_row
 from taskbot.infrastructure.sqlalchemy.queries import many, one
-from taskbot.infrastructure.sqlalchemy.tables import TaskRow, concrete_table
+from taskbot.infrastructure.sqlalchemy.tables import InboundMessageRow, TaskRow, concrete_table
 
 
 class SqlAlchemyTaskRepository:
@@ -61,14 +61,32 @@ class SqlAlchemyTaskRepository:
         )
         return None if row is None else task_from_row(row)
 
-    async def list_for_user(self, user_id: int) -> tuple[Task, ...]:
-        rows = await many(
-            self._session,
-            select(*TaskRow.__table__.c)
+    async def delete(self, task_id: int) -> None:
+        await self._session.execute(delete(concrete_table(TaskRow)).where(TaskRow.id == task_id))
+
+    async def page_for_user(
+        self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, fetch: int
+    ) -> tuple[SourcedTask, ...]:
+        statement = (
+            select(*TaskRow.__table__.c, InboundMessageRow.text.label("source_text"))
+            .join(InboundMessageRow, InboundMessageRow.id == TaskRow.inbound_message_id)
             .where(TaskRow.user_id == user_id)
-            .order_by(TaskRow.inbound_message_id.desc(), TaskRow.position),
+            .order_by(TaskRow.inbound_message_id.desc(), TaskRow.position)
+            .limit(fetch)
         )
-        return tuple(task_from_row(row) for row in rows)
+        if status is not None:
+            statement = statement.where(TaskRow.status == status)
+        if after is not None:
+            statement = statement.where(
+                or_(
+                    TaskRow.inbound_message_id < after.inbound_message_id,
+                    and_(
+                        TaskRow.inbound_message_id == after.inbound_message_id,
+                        TaskRow.position > after.position,
+                    ),
+                )
+            )
+        return tuple(sourced_task_from_row(row) for row in await many(self._session, statement))
 
     async def list_for_message(self, inbound_message_id: int) -> tuple[Task, ...]:
         rows = await many(

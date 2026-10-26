@@ -25,7 +25,7 @@ from taskbot.domain.users import TelegramIdentity
 from taskbot.domain.voice_jobs import Claimed, NewVoiceJob, TranscriptionProvider, VoiceJobStatus
 from taskbot.infrastructure.sqlalchemy.tables import UserRow
 from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from tests.contract.helpers import create_message, create_voice
+from tests.contract.helpers import all_tasks, create_message, create_voice
 from tests.fakes.calls import Calls
 from tests.fakes.clock import FakeClock
 from tests.fakes.extraction import FakeExtractor
@@ -185,7 +185,7 @@ async def test_voice_composition_rolls_back_and_fences_stale_attempt(
         await complete(1, True)
     async with postgres_uows() as uow:
         assert await uow.messages.get_by_ref(job.ref) is None
-        assert await uow.tasks.list_for_user(job.user_id) == ()
+        assert await all_tasks(uow, job.user_id) == ()
         still = await uow.voice_jobs.get(job.id)
         assert still is not None
         assert still.status == VoiceJobStatus.PROCESSING
@@ -198,7 +198,7 @@ async def test_voice_composition_rolls_back_and_fences_stale_attempt(
         finished = await uow.voice_jobs.get(job.id)
         assert finished is not None
         assert finished.status == VoiceJobStatus.DONE
-        assert len(await uow.tasks.list_for_user(job.user_id)) == 1
+        assert len(await all_tasks(uow, job.user_id)) == 1
 
 
 async def test_duplicate_text_creation_is_atomic(postgres_uows: UnitOfWorkFactory) -> None:
@@ -242,7 +242,9 @@ async def test_status_microseconds_ownership_and_core_rows(
     async with postgres_uows() as uow:
         assert await uow.tasks.get_for_update(999, tasks[0].id) is None
         assert await uow.tasks.get_for_update(message.user_id, tasks[0].id) == b.task
-    assert await ListTasks(postgres_uows).execute(999) == ()
+    assert (
+        await ListTasks(postgres_uows).execute(999, status=None, after=None, limit=50)
+    ).items == ()
     with pytest.raises(TaskNotFoundError):
         await change.execute(999, tasks[0].id, TaskStatus.PENDING)
 

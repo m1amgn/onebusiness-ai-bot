@@ -19,6 +19,7 @@ from taskbot.domain.messages import MessageKind, MessageRef
 from taskbot.domain.tasks import TaskStatus
 from taskbot.domain.text import MessageText
 from taskbot.domain.users import TelegramIdentity
+from tests.contract.helpers import all_tasks
 from tests.fakes.calls import Calls
 from tests.fakes.clock import FakeClock
 from tests.fakes.extraction import FakeExtractor
@@ -26,7 +27,7 @@ from tests.fakes.persistence import FakeStore
 from tests.fakes.tokens import FakeTokenGenerator, FakeTokenHasher
 
 
-async def test_create_duplicate_order_status_and_ownership() -> None:
+async def test_creation_duplicate_source_and_list_order() -> None:
 
     calls = Calls()
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
@@ -48,6 +49,8 @@ async def test_create_duplicate_order_status_and_ownership() -> None:
     assert not isinstance(first, DuplicateMessage)
     assert calls.items.index("extract") < calls.items.index("uow.open")
     assert len(first.events) == 1
+    assert first.events[0].type == "task.created"
+    assert first.events[0].task.source_text == "one task"
     assert [t.position for t in first.tasks] == [0]
     again = await create.execute(command)
     assert isinstance(again, DuplicateMessage)
@@ -57,25 +60,41 @@ async def test_create_duplicate_order_status_and_ownership() -> None:
         CreateTasksCommand(command.identity, MessageRef(7, 2), command.kind, "new")
     )
     assert not isinstance(newer, DuplicateMessage)
-    tasks = await ListTasks(store).execute(first.user_id)
+    listing = await ListTasks(store).execute(first.user_id, status=None, after=None, limit=50)
+    tasks = tuple(item.task for item in listing.items)
     assert [t.id for t in tasks] == [t.id for t in newer.tasks + first.tasks]
+
+
+async def test_status_changes_keep_source_ownership_and_event_order() -> None:
+    from tests.contract.helpers import create_message
+
+    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
+    store = FakeStore()
+    async with store() as uow:
+        mid = await create_message(uow, clock.now())
+        (initial,) = await uow.tasks.add_many(1, mid, (TaskDraft(title="Task"),), clock.now())
+        await uow.commit()
     change = ChangeTaskStatus(store, clock)
-    a = await change.execute(first.user_id, first.tasks[0].id, TaskStatus.IN_PROGRESS)
-    b = await change.execute(first.user_id, first.tasks[0].id, TaskStatus.COMPLETED)
+    a = await change.execute(1, initial.id, TaskStatus.IN_PROGRESS)
+    b = await change.execute(1, initial.id, TaskStatus.COMPLETED)
     assert a.changed
     assert b.changed
     assert len(a.events) == len(b.events) == 1
     assert a.task.updated_at == clock.now() + timedelta(microseconds=1)
     assert b.task.updated_at == clock.now() + timedelta(microseconds=2)
-    same = await change.execute(first.user_id, b.task.id, TaskStatus.COMPLETED)
+    same = await change.execute(1, b.task.id, TaskStatus.COMPLETED)
+    assert a.view.source_text == same.view.source_text == "Call home"
+    assert a.events[0].type == "task.updated"
+    assert a.events[0].task.source_text == "Call home"
     assert not same.changed
     assert same.events == ()
     assert same.task.updated_at == b.task.updated_at
-    assert [t.id for t in await ListTasks(store).execute(first.user_id)] == [t.id for t in tasks]
-    assert await ListTasks(store).execute(999) == ()
+    again_listing = await ListTasks(store).execute(1, status=None, after=None, limit=50)
+    assert [item.task.id for item in again_listing.items] == [initial.id]
+    assert (await ListTasks(store).execute(999, status=None, after=None, limit=50)).items == ()
     with pytest.raises(TaskNotFoundError):
         await change.execute(999, b.task.id, TaskStatus.PENDING)
-    held = TaskView.from_task(first.tasks[0])
+    held = TaskView.from_task(initial, "Call home")
     for event in (b.events[0], a.events[0]):
         if event.type == "task.updated" and event.task.updated_at > held.updated_at:
             held = event.task
@@ -232,4 +251,10 @@ async def test_standalone_creation_rolls_back_failed_writes(failure: str) -> Non
     async with store() as uow:
         assert await uow.users.get(1) is None
         assert await uow.messages.get_by_ref(command.ref) is None
-        assert await uow.tasks.list_for_user(1) == ()
+        assert await all_tasks(uow, 1) == ()
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+async def test_listing_refuses_nonpositive_limit(limit: int) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        await ListTasks(FakeStore()).execute(1, status=None, after=None, limit=limit)

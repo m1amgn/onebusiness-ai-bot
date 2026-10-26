@@ -30,3 +30,21 @@ class Task:
         return replace(
             self, status=new, updated_at=max(now, self.updated_at + timedelta(microseconds=1))
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SourcedTask:
+    task: Task
+    source_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskCursor:
+    inbound_message_id: int
+    position: int
+
+
+@dataclass(frozen=True, slots=True)
+class TaskListing:
+    items: tuple[SourcedTask, ...]
+    next: TaskCursor | None

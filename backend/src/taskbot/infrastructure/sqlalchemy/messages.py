@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +9,7 @@ from taskbot.domain.time import require_aware
 from taskbot.infrastructure.sqlalchemy.mapping import message_from_row
 from taskbot.infrastructure.sqlalchemy.queries import one
 from taskbot.infrastructure.sqlalchemy.tables import InboundMessageRow as MessageRow
-from taskbot.infrastructure.sqlalchemy.tables import concrete_table
+from taskbot.infrastructure.sqlalchemy.tables import TaskRow, concrete_table
 
 
 class SqlAlchemyMessageRepository:
@@ -53,3 +53,11 @@ class SqlAlchemyMessageRepository:
             self._session, select(*MessageRow.__table__.c).where(MessageRow.id == message_id)
         )
         return None if row is None else message_from_row(row)
+
+    async def erase_text_if_unused(self, message_id: int) -> None:
+        has_tasks = select(TaskRow.id).where(TaskRow.inbound_message_id == MessageRow.id).exists()
+        await self._session.execute(
+            update(concrete_table(MessageRow))
+            .where(MessageRow.id == message_id, ~has_tasks)
+            .values(text=None)
+        )

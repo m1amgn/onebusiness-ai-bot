@@ -3,8 +3,9 @@
 A task-management application. Users create tasks by sending text or voice messages to a Telegram bot. A background worker transcribes voice messages asynchronously through Redis queues. PostgreSQL stores tasks and users. A responsive web dashboard shows the tasks in real time and lets users move each task between Pending, In Progress and Completed. Docker Compose runs the web application, PostgreSQL, Redis and the worker.
 
 The domain core and PostgreSQL persistence are available, with migrations and a
-command to create development tasks. The API serves health only, and the frontend
-is a placeholder with a generated API contract. The worker runtime is available. Bot handlers and task dashboard
+command to create development tasks. The API serves authenticated task pages,
+status changes and real-time events. The frontend is a placeholder with a generated
+API contract. The worker runtime is available. Bot handlers and task dashboard
 features are added in later stages.
 
 ## Local setup
@@ -44,7 +45,7 @@ No API key or Telegram token is needed for the foundation checks.
 | `yarn api:schema` | Export OpenAPI and regenerate TypeScript and Zod together |
 | `yarn api:check` | Fail if the schema or generated files are stale |
 | `yarn infra:up` / `yarn infra:stop` | Start or stop guarded local PostgreSQL and Redis |
-| `yarn dev:api` | API with reload on `http://127.0.0.1:8000`; public `GET /health` |
+| `yarn dev:api` | Task API with reload on `http://127.0.0.1:8000`; public `GET /health` |
 | `yarn dev:web` | Frontend on `http://127.0.0.1:5173`; `/api` proxy preserves the prefix |
 | `yarn dev:whisper` | Local whisper.cpp server on `http://127.0.0.1:8178` |
 | `yarn db:migrate` | Upgrade the database schema to the latest Alembic revision |
@@ -75,7 +76,7 @@ Every run rotates the token, including a duplicate message, so older links stop
 working. After both database commits, it publishes one `task.created` per task,
 then `auth.revoked`. The printed `Events channel:` uses the stored user's internal
 id, which differs from the Telegram id on the command line. A test namespace also
-prefixes this channel. The dashboard and task API arrive later; this command
+prefixes this channel. The dashboard arrives later; this command
 verifies persistence and Redis publication without Telegram.
 
 To observe development events, subscribe in another terminal before seeding:
@@ -245,6 +246,13 @@ internal-user channel rule. It starts no worker and connects to no store:
 uv run --locked --directory backend python tests/acceptance/replay_s3.py
 ```
 
+The read-only API replay checks the accepted task scenarios against synthetic
+messages. It uses in-memory stores and needs no credentials:
+
+```sh
+uv run --locked --directory backend python tests/acceptance/replay_s6.py
+```
+
 ## Local transcription
 
 For `yarn dev:whisper` only, install whisper.cpp (`brew install whisper-cpp` on
@@ -280,3 +288,54 @@ docker run --rm -p 127.0.0.1:18000:8000 taskbot-backend:s2
 ```
 
 The full application Compose stack is delivered after the remaining modules.
+
+## Task API
+
+Run `yarn dev:api` after the shared stores are available and the development
+database is migrated. `yarn dev:seed` prints a bearer token for local requests.
+Every new token invalidates older links for that user. The dashboard will read
+the token from its URL fragment; API calls send `Authorization: Bearer <token>`.
+Missing or invalid credentials return `401` with instructions to request a new link.
+
+| Method and path | Result |
+| --- | --- |
+| `GET /health` | Public health response |
+| `GET /api/tasks?limit=50&status=pending` | Task items and an opaque `next_cursor`; optional status; maximum limit 200 |
+| `PATCH /api/tasks/{task_id}` | Set `status` to `pending`, `in_progress` or `completed`; return the task |
+| `DELETE /api/tasks/{task_id}` | Permanently delete the task; return `204` without a body |
+| `POST /api/realtime/tickets` | Single-use ticket valid for 30 seconds |
+| `GET /api/events?ticket=…` | SSE task events and revocation notifications |
+
+Each task includes `source_text`, the stored message text for its tooltip. Follow
+`next_cursor` to load another page. A foreign or missing task returns `404`.
+Status publication follows the database commit; a Redis failure does not undo a
+saved change. Refresh the task list after every stream reconnect.
+
+Deletion also erases the stored source message text when its last task is gone.
+The message record remains to prevent a duplicate delivery from recreating the
+task. Other tabs receive `task.deleted` with the task id. Deletion has no undo and
+does not remove the original message from the Telegram chat. Apply database
+migrations through revision `0003` before using this operation.
+
+The stream sends `: connected` after confirming its Redis subscription, then JSON
+`data:` frames without an `event:` field. Parse their `type` discriminator with
+the generated schema. Keep-alive comments arrive during idle periods. On errors,
+close the stream, request a new ticket and reconnect with back-off; `401` on the
+ticket request ends the loop. A token rotation forwards `auth.revoked` and closes
+the stream. The database recheck catches missed publications, using elapsed time
+every 20 seconds and a five-second check timeout.
+
+There is no cap on simultaneous streams; each holds one Redis connection. Very
+long voice transcripts increase task pages and event sizes because source text
+is not truncated. The access log includes single-use ticket query strings;
+these tickets expire after 30 seconds and cannot be reused after consumption.
+
+The API routes and streaming behavior are verified with local PostgreSQL and
+Redis; these checks need no Telegram or transcription credentials. The frontend
+contract is generated with `yarn api:schema`; `yarn api:check` detects drift.
+
+Runtime `/docs`, `/redoc` and `/openapi.json` routes are disabled. Use the
+committed OpenAPI file or `yarn api:schema`. Expected API errors have a JSON
+`detail` string, with generated types for `401`, `404` and `503`. Malformed JSON
+returns `422` before bearer validation; otherwise protected requests require
+a valid token.
