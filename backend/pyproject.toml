@@ -40,9 +40,17 @@ required-version = ">=0.13"
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "B", "UP", "ASYNC", "SIM", "PT", "RUF", "C901", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["taskbot", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Synthetic multilingual messages intentionally include Cyrillic lookalikes.
+"tests/**" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -54,7 +62,7 @@ max-statements = 40
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "alembic"]
 
 [tool.pydantic-mypy]
 init_typed = true
@@ -63,6 +71,8 @@ warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--strict-markers"
