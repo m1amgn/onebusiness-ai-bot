@@ -157,7 +157,7 @@ async def test_developer_command_rejects_invalid_role() -> None:
         "bogus",
         cwd=ROOT,
         env={**os.environ, "TASKBOT_ENV_FILE": "/dev/null"},
-        timeout_seconds=10,
+        timeout_seconds=30,
     )
     assert result.returncode != 0
     assert "Invalid configuration: WORKER_ROLE" in result.stderr

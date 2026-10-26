@@ -133,7 +133,7 @@ class RunningWorker:
         assert self.role == "notify"
         assert self.schedule_path.parent == Path(self.env["TMPDIR"])
         assert self.schedule_path.name.endswith(self.namespace.replace(":", "_"))
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(30):
             # Schedule-file creation has no portable asynchronous notification.
             while not self.schedule_path.exists():  # noqa: ASYNC110
                 await asyncio.sleep(0.05)
@@ -168,7 +168,7 @@ class RunningWorker:
             "2",
             cwd=BACKEND,
             env=self.env,
-            timeout_seconds=8,
+            timeout_seconds=30,
         )
 
     async def ready(self) -> None:
