@@ -1,3 +1,4 @@
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 from taskbot.domain.events import DomainEvent
@@ -12,6 +13,14 @@ class JobQueue(Protocol):
 
 class EventPublisher(Protocol):
     async def publish(self, event: DomainEvent) -> None: ...
+
+
+class EventSubscription(Protocol):
+    async def next(self, timeout_seconds: float) -> str | None: ...
+
+
+class EventSubscriber(Protocol):
+    def subscribe(self, user_id: int) -> AbstractAsyncContextManager[EventSubscription]: ...
 
 
 class TicketStore(Protocol):

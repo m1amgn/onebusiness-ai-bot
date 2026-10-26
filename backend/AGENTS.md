@@ -28,8 +28,12 @@ execute results carry the events returned by commit. Publish only after commit w
 publish_events; publication failures are logged without undoing persisted work.
 CreateTasksFromMessage.within returns CreatedMessage or DuplicateMessage; standalone
 execute returns TasksCreated (which adds events) or DuplicateMessage. S5 composes the
-within result with voice-job completion in one unit of work. TaskView.from_task in
-domain/events.py converts an entity for events; entities do not import wire models.
+within result with voice-job completion in one unit of work. TaskView.from_task(task, source_text) in domain/events.py builds the shared wire
+shape. Task events include the stored source message text; entities do not import
+wire models. TaskRepository.page_for_user joins that text and orders by descending
+message id, then ascending position. ListTasks fetches one extra row and returns
+a cursor only when another page exists. Status changes return a TaskChange.view
+even when the requested status is unchanged.
 ChangeTaskStatus locks the owner-filtered task before reading the clock. Token
 authentication rejects malformed input before hashing and reads id/version together.
 Repository contracts in tests/contract run against both the transactional fake and
@@ -138,7 +142,13 @@ EventStreamGapError identifies a reconnect; Redis/timeout failures in adapter op
 become EventStreamError. Consumer-body exceptions retain their identity. Exit cleanup
 survives repeated cancellation within its operation timeouts, then propagates cancellation.
 A consumer closes its stream and refetches state after either stream error.
-Events received during the idle PING remain deliverable. S6 owns SSE and revocation checks.
+Events received during the idle PING remain deliverable. EventStreamError and
+EventStreamGapError live in domain/errors.py and remain re-exported by the adapter.
+RedisEventSubscriber implements the domain subscription port. StreamUserEvents
+checks token_version after subscription confirmation and every 20 monotonic
+seconds, including under traffic. Each database check has a five-second timeout;
+post-start failures close the stream, and cancellation propagates after cleanup.
+The API frames the resulting items as SSE.
 
 RedisSettingsMixin supplies application/broker URLs and a validated test namespace.
 SeedSettings includes this mixin. The read-only owner replay is

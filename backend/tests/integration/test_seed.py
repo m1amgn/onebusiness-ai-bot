@@ -19,6 +19,7 @@ from taskbot.infrastructure.settings.seed import SeedSettings
 from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
 from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from taskbot.infrastructure.tokens import Sha256TokenHasher
+from tests.contract.helpers import all_tasks
 from tests.databases import test_database as database_context
 from tests.fakes.messaging import FakeEventPublisher
 from tests.processes import ProcessResult, run_process
@@ -38,7 +39,7 @@ class CommittedPublisher:
     async def publish(self, event: DomainEvent) -> None:
         async with self.uows() as uow:
             user = await uow.users.get(event.user_id)
-            tasks = await uow.tasks.list_for_user(event.user_id)
+            tasks = await all_tasks(uow, event.user_id)
         assert user is not None
         assert user.telegram_user_id == 1001
         assert user.token_version == self.expected_version
@@ -103,7 +104,7 @@ async def test_failed_seed_publication_preserves_committed_tasks_and_token(
     authenticate = AuthenticateToken(postgres_uows, Sha256TokenHasher())
     assert (await authenticate.execute(result.token)).user_id == result.user_id
     async with postgres_uows() as uow:
-        tasks = await uow.tasks.list_for_user(result.user_id)
+        tasks = await all_tasks(uow, result.user_id)
     assert [task.title for task in tasks] == [MESSAGE]
 
 
@@ -187,7 +188,7 @@ async def test_root_seed_command_migrates_and_rotates_on_a_throwaway_database(
                 await authenticate.execute(tokens[0])
             assert (await authenticate.execute(tokens[1])).token_version == 2
             async with SqlAlchemyUnitOfWork(sessions) as uow:
-                tasks = await uow.tasks.list_for_user(1)
+                tasks = await all_tasks(uow, 1)
                 assert len(tasks) == 2
                 assert all(task.title == MESSAGE for task in tasks)
                 assert tasks[0].inbound_message_id > tasks[1].inbound_message_id

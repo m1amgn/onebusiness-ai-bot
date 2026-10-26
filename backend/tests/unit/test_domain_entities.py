@@ -45,7 +45,9 @@ def test_events_exclude_routing_identity_and_use_one_task_shape() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     task = Task(1, 2, 3, 0, "Call home", "", TaskStatus.PENDING, now, now)
     for cls, kind in ((TaskCreated, "task.created"), (TaskUpdated, "task.updated")):
-        value = json.loads(cls(user_id=2, task=TaskView.from_task(task)).model_dump_json())
+        value = json.loads(
+            cls(user_id=2, task=TaskView.from_task(task, "source message")).model_dump_json()
+        )
         assert set(value) == {"type", "task"}
         assert value["type"] == kind
         assert set(value["task"]) == {
@@ -57,7 +59,9 @@ def test_events_exclude_routing_identity_and_use_one_task_shape() -> None:
             "status",
             "created_at",
             "updated_at",
+            "source_text",
         }
+        assert value["task"]["source_text"] == "source message"
     assert json.loads(AuthRevoked(user_id=2).model_dump_json()) == {"type": "auth.revoked"}
 
 
@@ -86,3 +90,17 @@ def test_retry_schedule_rejects_invalid_attempts() -> None:
     assert [retry_delay_seconds(n) for n in (1, 2, 3, 4)] == [2, 4, 8, 16]
     with pytest.raises(ValueError, match="positive"):
         retry_delay_seconds(0)
+
+
+@pytest.mark.parametrize("field", ["title", "description"])
+def test_task_view_refuses_text_over_domain_caps(field: str) -> None:
+    from taskbot.domain.events import TaskView
+    from taskbot.domain.limits import DESCRIPTION_MAX
+    from taskbot.domain.tasks import Task, TaskStatus
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    task = Task(1, 2, 3, 0, "Task", "", TaskStatus.PENDING, now, now)
+    values = TaskView.from_task(task, "Original message").model_dump()
+    values[field] = "x" * (121 if field == "title" else DESCRIPTION_MAX + 1)
+    with pytest.raises(ValidationError):
+        TaskView.model_validate(values)

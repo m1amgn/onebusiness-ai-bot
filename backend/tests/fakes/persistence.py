@@ -23,7 +23,7 @@ from taskbot.domain.ports.persistence import (
     UserRepository,
     VoiceJobRepository,
 )
-from taskbot.domain.tasks import Task, TaskStatus
+from taskbot.domain.tasks import SourcedTask, Task, TaskCursor, TaskStatus
 from taskbot.domain.time import require_aware
 from taskbot.domain.users import AuthenticatedUser, TelegramIdentity, UpsertedUser, User
 from taskbot.domain.voice_jobs import (
@@ -189,14 +189,31 @@ class FakeTaskRepository(FakeRepository):
         self.state.tasks[task.id] = saved
         return saved
 
-    async def list_for_user(self, user_id: int) -> tuple[Task, ...]:
-        self.called("tasks.list_for_user")
-        return tuple(
-            sorted(
-                (t for t in self.state.tasks.values() if t.user_id == user_id),
-                key=lambda t: (-t.inbound_message_id, t.position),
-            )
-        )
+    async def page_for_user(
+        self, user_id: int, *, status: TaskStatus | None, after: TaskCursor | None, fetch: int
+    ) -> tuple[SourcedTask, ...]:
+        self.called("tasks.page_for_user")
+        tasks = sorted(
+            (
+                task
+                for task in self.state.tasks.values()
+                if task.user_id == user_id
+                and (status is None or task.status == status)
+                and (
+                    after is None
+                    or (-task.inbound_message_id, task.position)
+                    > (-after.inbound_message_id, after.position)
+                )
+            ),
+            key=lambda task: (-task.inbound_message_id, task.position),
+        )[:fetch]
+        result = []
+        for task in tasks:
+            source = self.state.messages[task.inbound_message_id].text
+            if source is None:
+                raise RuntimeError("Task has no source message text")
+            result.append(SourcedTask(task, source))
+        return tuple(result)
 
     async def list_for_message(self, inbound_message_id: int) -> tuple[Task, ...]:
         self.called("tasks.list_for_message")

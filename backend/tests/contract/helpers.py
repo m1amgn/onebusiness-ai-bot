@@ -3,6 +3,7 @@ from datetime import datetime
 from taskbot.domain.extraction import ExtractorName
 from taskbot.domain.messages import MessageKind, MessageRef, NewInboundMessage
 from taskbot.domain.ports.persistence import UnitOfWork
+from taskbot.domain.tasks import Task
 from taskbot.domain.text import MessageText
 from taskbot.domain.users import TelegramIdentity
 from taskbot.domain.voice_jobs import NewVoiceJob, VoiceJob
@@ -31,3 +32,9 @@ async def create_voice(uow: UnitOfWork, now: datetime) -> VoiceJob:
         NewVoiceJob(user.user.id, MessageRef(7, 10), "file", "unique", 5, None), now
     )
     return added.job
+
+
+async def all_tasks(uow: UnitOfWork, user_id: int) -> tuple[Task, ...]:
+    """Read the small fixture's tasks through the production paging contract."""
+    rows = await uow.tasks.page_for_user(user_id, status=None, after=None, fetch=10000)
+    return tuple(row.task for row in rows)

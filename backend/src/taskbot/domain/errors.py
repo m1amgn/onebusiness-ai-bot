@@ -24,6 +24,14 @@ class InvalidTicketError(DomainError):
     pass
 
 
+class EventStreamError(DomainError):
+    """The event stream cannot be trusted; reconnect and refetch application state."""
+
+
+class EventStreamGapError(EventStreamError):
+    """Redis reconnected, so events may have been lost."""
+
+
 class StaleAttemptError(DomainError):
     pass
 

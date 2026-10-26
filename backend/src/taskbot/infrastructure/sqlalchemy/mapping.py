@@ -2,7 +2,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import RowMapping
 
 from taskbot.domain.messages import InboundMessage
-from taskbot.domain.tasks import Task
+from taskbot.domain.tasks import SourcedTask, Task
 from taskbot.domain.users import User
 from taskbot.domain.voice_jobs import VoiceJob
 
@@ -36,3 +36,10 @@ def task_from_row(row: RowMapping) -> Task:
 
 def voice_job_from_row(row: RowMapping) -> VoiceJob:
     return VOICE_JOB.validate_python(with_ref(row))
+
+
+def sourced_task_from_row(row: RowMapping) -> SourcedTask:
+    source = row["source_text"]
+    if not isinstance(source, str):
+        raise RuntimeError("Task has no source message text")
+    return SourcedTask(task_from_row(row), source)
