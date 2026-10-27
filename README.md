@@ -417,11 +417,14 @@ model and hardware with repeated synthetic speech; they do not measure accuracy.
 The separate OpenAI check returned non-empty text from `gpt-transcribe` for the
 3.82-second synthetic fixture in 2.526 seconds. The first key returned
 `provider_unavailable`; the owner replaced it and authorized one successful repeat.
-The test-bot voice flow did not pass: the worker rejected a real Telegram voice
-note as `unsupported_audio` before contacting Whisper, and created no task.
-The owner chose to remove the packet parser and trust Telegram's declared
-duration (S5-D9). The parser and worker-side duration refusal are now removed;
-a successful bot rerun remains pending.
+The first test-bot voice was rejected before Whisper and created no task. After
+the owner chose to trust Telegram's declared duration (S5-D9), the packet parser
+and worker-side duration refusal were removed. A new voice recorded in the
+Telegram app then passed through the real test bot and both development workers:
+Whisper returned text, one task was stored, and the acknowledgement was edited
+to the result on the first transcription and notification attempts. The stand
+used heuristic extraction with a private test database and Redis namespace;
+both were removed after verification.
 
 ## Backend image
 
