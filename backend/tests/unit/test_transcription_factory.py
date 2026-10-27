@@ -66,8 +66,9 @@ async def test_missing_key_warns_once_and_refuses_without_sdk(
     from taskbot.infrastructure.transcription.factory import open_transcriber
 
     forbid_openai_import(monkeypatch)
-    configured = settings(transcription_provider="openai", openai_api_key=key)
+    configured = settings(openai_api_key=key)
     async with open_transcriber(configured) as adapter:
+        assert adapter.provider == TranscriptionProvider.OPENAI
         for _ in range(2):
             with pytest.raises(TranscriptionError) as raised:
                 await adapter.transcribe(b"voice")
@@ -149,7 +150,7 @@ async def test_openai_factory_configures_and_closes_client(
         assert logging.getLogger(name).level == logging.WARNING
 
 
-async def test_default_factory_opens_and_closes_whisper_without_openai(
+async def test_explicit_whisper_factory_opens_and_closes_without_openai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from taskbot.infrastructure.transcription.factory import open_transcriber
@@ -172,7 +173,7 @@ async def test_default_factory_opens_and_closes_whisper_without_openai(
     monkeypatch.setattr(httpx, "AsyncClient", capture_client)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", send)
     forbid_openai_import(monkeypatch)
-    async with open_transcriber(settings()) as adapter:
+    async with open_transcriber(settings(transcription_provider="whisper_server")) as adapter:
         assert adapter.provider == TranscriptionProvider.WHISPER_SERVER
         assert not clients[0].is_closed
         assert not clients[0].follow_redirects

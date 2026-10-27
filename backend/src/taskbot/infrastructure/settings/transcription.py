@@ -4,7 +4,7 @@ from taskbot.domain.voice_jobs import TranscriptionProvider
 
 
 class TranscriptionSettingsMixin(BaseModel):
-    transcription_provider: TranscriptionProvider = TranscriptionProvider.WHISPER_SERVER
+    transcription_provider: TranscriptionProvider = TranscriptionProvider.OPENAI
     openai_api_key: SecretStr | None = None
 
 

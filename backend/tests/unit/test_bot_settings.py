@@ -10,7 +10,7 @@ def test_bot_settings_validate_token_provider_and_shared_web_url() -> None:
     settings = BotSettings(
         _env_file=None, telegram_bot_token=SecretStr("123456:synthetic"), database_url=database_url
     )
-    assert str(settings.transcription_provider) == "whisper_server"
+    assert str(settings.transcription_provider) == "openai"
     assert settings.web_base_url == "http://localhost:5173"
     with pytest.raises(ValidationError, match="malformed token"):
         BotSettings(

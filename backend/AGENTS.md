@@ -173,6 +173,17 @@ deletion. No test assumes exclusive use. S1's tests only read.
 
 ## API schema and image
 
+docker/backend.Dockerfile packages every Python entry point in one non-root image.
+Python and uv use version tags and immutable index digests. Its default API command
+sets --timeout-graceful-shutdown 2; Compose overrides the command for other roles.
+Every backend container uses init: true, so Celery's recorded main PID exceeds 1
+and a fatal pool-child initialization can stop it through the existing safe guard.
+The transcription default is openai; a missing key refuses voice without an SDK call.
+Local whisper development explicitly selects whisper_server. The delivered optional
+whisper image selects a native architecture base by index digest and verifies its
+base model download before renaming the partial file. It runs as uid 10001 with
+conversion files under /tmp and the model under /models.
+
 The API factory registers routes without reading environment variables. Production
 lifespan validates ApiSettings and owns its SQL engine and Redis client. Injected
 ApiServices attach immediately, so ASGITransport tests need no lifespan runner.

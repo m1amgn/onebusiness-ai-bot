@@ -3,6 +3,23 @@
 React, TypeScript and Vite form a Yarn workspace. Use `yarn`, never npm install.
 Run root `yarn dev:web` for behavior and `yarn verify:frontend` for checks.
 
+## Container build and delivery
+
+Run `yarn workspace frontend build` from the root to check TypeScript and write
+`frontend/dist`. The committed API client is used without regeneration.
+`docker/web.Dockerfile` builds from the repository root with the frozen Yarn lockfile
+and development dependencies. Its global npm command only bootstraps Yarn 1.22.22;
+project dependencies are installed with Yarn.
+
+The runtime serves the built files through nginx as uid 101 on port 8080.
+`docker/nginx.conf` owns SPA fallback, caching, gzip and the `/api/` proxy.
+`docker/nginx-headers.conf` owns security headers; include it again in any location
+that adds response headers, since that location replaces inherited headers.
+The runtime's main configuration retains its pid and temporary paths in `/tmp`;
+Compose provides a writable `/tmp` with a read-only root filesystem.
+The proxy resolves the API through Docker DNS with a 10-second cache.
+`/api/events` disables proxy buffering.
+
 ## Layers
 
 ESLint boundaries enforce app -> features/components/lib, features ->

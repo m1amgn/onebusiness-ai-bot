@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "build": "tsc -b && vite build",
     "verify": "eslint . && prettier --check . && tsc -b && vitest run",
     "api:generate": "openapi-ts",
     "test": "vitest run"
