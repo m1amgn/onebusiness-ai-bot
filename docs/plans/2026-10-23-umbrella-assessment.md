@@ -399,7 +399,7 @@ What a person gets, stage by stage, on their own machine:
 | S10 | send `/tasks` to the bot and see their current tasks in the chat; which tasks count as current and how they are shown is decided in S10 (added by amendment 7, section 18) | 2–4 h |
 | S8 | run `docker compose up --build` and use everything from one command (an OpenAI key in `.env` for voice, or the `whisper` profile without a key); read the README | 6–9 h |
 
-S4, S5, S6 and S9 can run as parallel children (two at a time given machine load), S7 after S6, and S10 after S4 (section 18). Total: about 44–67 hours of agent work; on a calendar with two children in parallel and the owner's answers within the hour, roughly seven to nine working days to a hand-in-ready repository. The owner's time: one grill per stage (ten to twenty questions) and one acceptance table per stage.
+S4, S5, S6 and S9 can run as parallel children (two at a time given machine load), S7 after S6, and S10 after S4 (section 18). Total: about 46–71 hours of agent work (44–67 before amendment 7 added S10); on a calendar with two children in parallel and the owner's answers within the hour, roughly seven to nine working days to a hand-in-ready repository. The owner's time: one grill per stage (ten to twenty questions) and one acceptance table per stage.
 
 Owner's acceptance of this statement, 2026-10-23: «Да, принимаю». The S10 row was added by amendment 7 (section 18), which raises the total to about 46–71 hours; the owner accepted it, and S8's wait for S10, on 2026-10-27: «Да».
 
@@ -618,7 +618,7 @@ S5 (`docs/plans/2026-10-27-s5-worker.md`, integrated at `e89ad8c`) departs from 
 | W14 | `SweepJob` in `domain/jobs.py` names the sweep and routes it | — |
 | W15 | a re-enqueue while a lease is live waits at least 1 s and stamps nothing | — |
 | W16 | `Transcriber.transcribe(audio)` has no `timeout_seconds` argument: each adapter owns its timeout | — |
-| W17 | the shared SQL engine sets `hide_parameters=True`, so error texts in every process carry no chat text | S4, S6 (their logs too) |
+| W17 | the shared SQL engine sets `hide_parameters=True`, so a SQL error no longer prints its bound parameters, where chat text would appear; the database driver's own error details still appear | S4, S6 (their logs too) |
 
 **Notes from the S5 reviews and the S5 design's risks** (S5 design sections 8 and 11; final review at `e89ad8c`):
 
