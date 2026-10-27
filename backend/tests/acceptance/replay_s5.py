@@ -44,15 +44,21 @@ async def case_transcriber(row: str) -> AsyncIterator[Transcriber]:
     if row == "V3":
         yield UnavailableTranscriber()
         return
-    if row == "V6":
+    if row in {"V5", "V6"}:
+        requests: list[httpx.Request] = []
 
-        def non_speech(request: httpx.Request) -> httpx.Response:
+        def response(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if row == "V5":
+                assert b"not an Ogg stream" in request.content
+                return httpx.Response(500, text="FFmpeg conversion failed.")
             return httpx.Response(200, json={"text": "[BLANK_AUDIO]"})
 
         async with httpx.AsyncClient(
-            transport=httpx.MockTransport(non_speech), base_url="http://synthetic"
+            transport=httpx.MockTransport(response), base_url="http://synthetic"
         ) as client:
             yield WhisperServerTranscriber(client)
+        assert len(requests) == 1
         return
     provider = TranscriptionProvider.WHISPER_SERVER
     script: list[Transcript | BaseException]

@@ -29,7 +29,7 @@ def offline_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket.socket, "connect", forbidden_network)
 
 
-async def test_probe_uses_owned_adapter_and_reports_audio_and_elapsed_time(
+async def test_probe_uses_owned_adapter_and_reports_elapsed_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tests.acceptance import live_transcription as probe
@@ -45,13 +45,12 @@ async def test_probe_uses_owned_adapter_and_reports_audio_and_elapsed_time(
             calls.append("close")
 
     monkeypatch.setattr(probe, "open_transcriber", open_fake)
-    audio, duration = probe.read_audio(FIXTURE)
-    result = await probe.measure(probe.LiveTranscriptionSettings(_env_file=None), audio, duration)
+    audio = probe.read_audio(FIXTURE)
+    result = await probe.measure(probe.LiveTranscriptionSettings(_env_file=None), audio)
     assert calls == ["open", "close"]
     assert result.provider == "whisper_server"
     assert result.model is None
     assert result.text == SENTENCE
-    assert result.audio_seconds == 3.82
     assert result.elapsed_seconds >= 0
 
 
@@ -72,24 +71,26 @@ def test_missing_openai_key_exits_before_opening_a_provider(
     assert "TRANSCRIPTION_PROVIDER" not in os.environ
 
 
-def test_unreadable_audio_exits_before_opening_a_provider(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_probe_sends_audio_to_provider_without_inspecting_its_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from tests.acceptance import live_transcription as probe
 
-    audio = tmp_path / "invalid.ogg"
-    audio.write_bytes(b"not an Ogg stream")
+    audio = tmp_path / "synthetic.bin"
+    audio.write_bytes(b"provider-owned audio decoding")
+    adapter = ScriptedTranscriber([Transcript(SENTENCE, TranscriptionProvider.WHISPER_SERVER)])
 
-    def forbidden(*args: object, **kwargs: object) -> None:
-        raise AssertionError("Provider factory reached for unreadable audio")
+    @asynccontextmanager
+    async def open_fake(settings: object) -> AsyncIterator[Transcriber]:
+        yield adapter
 
-    monkeypatch.setattr(probe, "open_transcriber", forbidden)
+    monkeypatch.setattr(probe, "open_transcriber", open_fake)
     monkeypatch.setattr(
         sys, "argv", ["live_transcription.py", "--provider", "whisper_server", "--file", str(audio)]
     )
-    with pytest.raises(SystemExit) as raised:
-        probe.main()
-    assert raised.value.code == 2
+    probe.main()
+    assert adapter.audio == [audio.read_bytes()]
+    assert json.loads(capsys.readouterr().out)["text"] == SENTENCE
 
 
 def test_probe_cli_makes_one_call_without_database_or_telegram_settings(
@@ -118,7 +119,6 @@ def test_probe_cli_makes_one_call_without_database_or_telegram_settings(
     assert result["provider"] == "openai"
     assert result["model"] == "gpt-transcribe"
     assert result["text"] == SENTENCE
-    assert result["audio_seconds"] == 3.82
     assert adapter.audio == [FIXTURE.read_bytes()]
     assert "synthetic-test-key" not in output
 

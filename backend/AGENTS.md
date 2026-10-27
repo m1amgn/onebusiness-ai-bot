@@ -311,12 +311,13 @@ record the result in the README.
 
 TranscribeWorkerSettings declares provider and extractor settings separately from
 notify-role WorkerSettings. Both reuse the bot's Telegram token shape validator.
-Transcriber.transcribe takes audio bytes; each adapter owns its timeout. The
-domain audio inspector sums Opus packet durations and refuses malformed or chained
-Ogg streams before a provider call. MessageText.bounded caps stored transcripts at
-4096 characters. Worker notification copy lives in application/replies.py.
-Migration 0004 permits too_long; migrate before using that failure kind. Downgrade
-rewrites too_long to too_large. The shared SQL engine hides bound parameters.
+Transcriber.transcribe takes audio bytes; each adapter owns its timeout. The bot
+checks Telegram's declared duration. The worker caps downloaded bytes and sends
+them to the provider without measuring duration or inspecting audio framing
+(S5-D9). Provider responses classify unreadable audio. MessageText.bounded caps
+stored transcripts at 4096 characters. Worker notification copy lives in
+application/replies.py. S5 adds no migration; the head stays 0003. The shared SQL
+engine hides bound parameters.
 
 Open transcription clients through infrastructure/transcription/factory.py's
 open_transcriber. The factory owns and closes the selected client; fake and
@@ -392,7 +393,7 @@ S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification
 
 The offline voice replay is tests/acceptance/replay_s5.py with
 TASKBOT_ENV_FILE=/dev/null. Its frozen V1-V12 expectations are s5_expected.json.
-It uses real use cases and the packet parser with synthetic service doubles;
+It uses real use cases with synthetic service doubles;
 provider factories and socket connections are forbidden during replay.
 
 The opt-in live probe is root yarn live:transcription --provider

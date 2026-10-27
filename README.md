@@ -75,8 +75,9 @@ link if needed. A failed reply after rotation also needs a new `/dashboard`.
 
 A voice message receives an acknowledgement, then enters the transcription queue.
 The limits are 120 seconds and 10,000,000 bytes; exact limits pass. Missing size
-metadata is checked during download. The worker also measures Opus packet duration
-and allows one second of duration tolerance. Failed enqueue attempts leave a
+metadata is checked during download. The bot checks Telegram's declared duration;
+the worker sends downloaded bytes to the provider without inspecting their format
+or measuring duration. Failed enqueue attempts leave a
 recoverable database row. A successful job edits the acknowledgement to the task
 title. A missing acknowledgement gets a new reply to the voice message.
 
@@ -392,8 +393,8 @@ The committed fixture is synthetic speech. No live Telegram or OpenAI integratio
 is claimed by this transcription check. The earlier Telegram entry-point check is
 recorded in the bot section; Claude extraction used the synthetic replay above.
 
-Use the opt-in probe for one recording. It prints provider, transcript, measured
-audio duration and elapsed transcription time. Each OpenAI invocation makes one
+Use the opt-in probe for one recording. It prints provider, transcript and elapsed
+transcription time. Each OpenAI invocation makes one
 paid call. The provider model and URL use the same settings as the worker:
 
 ```sh
@@ -419,7 +420,8 @@ The separate OpenAI check returned non-empty text from `gpt-transcribe` for the
 The test-bot voice flow did not pass: the worker rejected a real Telegram voice
 note as `unsupported_audio` before contacting Whisper, and created no task.
 The owner chose to remove the packet parser and trust Telegram's declared
-duration (S5-D9). The design amendment and a successful bot rerun remain pending.
+duration (S5-D9). The parser and worker-side duration refusal are now removed;
+a successful bot rerun remains pending.
 
 ## Backend image
 

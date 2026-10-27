@@ -5,12 +5,10 @@ from dataclasses import dataclass
 from taskbot.application.create_tasks import CreatedMessage, CreateTasksFromMessage
 from taskbot.application.publishing import publish_events
 from taskbot.application.replies import RETRYING
-from taskbot.domain.audio import opus_duration_seconds
 from taskbot.domain.errors import (
     EmptyMessageError,
     TranscriptionError,
     TransientTranscriptionError,
-    UnreadableAudioError,
     VoiceFileTooLargeError,
     VoiceFileUnavailableError,
 )
@@ -20,9 +18,7 @@ from taskbot.domain.limits import (
     ATTEMPT_BUDGET_SECONDS,
     MAX_TRANSCRIPTION_ATTEMPTS,
     MAX_VOICE_BYTES,
-    MAX_VOICE_SECONDS,
     TRANSCRIPT_MAX,
-    VOICE_DURATION_TOLERANCE_SECONDS,
     retry_delay_seconds,
 )
 from taskbot.domain.messages import MessageKind
@@ -169,8 +165,6 @@ class TranscribeVoiceJob:
             return _RetryPreparation()
         except TranscriptionError as error:
             return error.kind
-        except UnreadableAudioError:
-            return FailureKind.UNSUPPORTED_AUDIO
         except VoiceFileTooLargeError:
             return FailureKind.TOO_LARGE
         except EmptyMessageError:
@@ -183,9 +177,6 @@ class TranscribeVoiceJob:
 
     async def _read(self, row: VoiceJob) -> _Prepared:
         audio = await self._files.fetch(row.file_id, max_bytes=MAX_VOICE_BYTES)
-        maximum = MAX_VOICE_SECONDS + VOICE_DURATION_TOLERANCE_SECONDS
-        if opus_duration_seconds(audio) > maximum:
-            raise TranscriptionError(FailureKind.TOO_LONG)
         result = await self._transcriber.transcribe(audio)
         text, cut = MessageText.parse(result.text).bounded(TRANSCRIPT_MAX)
         if cut:

@@ -42,7 +42,6 @@ VOICE_EXHAUSTED = (
 VOICE_FAILED = "Something went wrong while processing this voice message. Please send it again."
 VOICE_FAILURE_TEXT = {
     FailureKind.TOO_LARGE: VOICE_TOO_LARGE,
-    FailureKind.TOO_LONG: VOICE_TOO_LONG,
     FailureKind.UNSUPPORTED_AUDIO: VOICE_UNSUPPORTED,
     FailureKind.EMPTY_TRANSCRIPT: VOICE_EMPTY,
     FailureKind.TRANSCRIPTION_TIMEOUT: VOICE_TIMEOUT,

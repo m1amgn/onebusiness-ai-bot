@@ -171,22 +171,26 @@ async def test_download_unavailable_is_transient_and_retry_edit_errors_are_safe(
     assert "private" not in caplog.text
 
 
-@pytest.mark.parametrize(("seconds", "kind"), [(121, None), (121.02, FailureKind.TOO_LONG)])
-async def test_packet_duration_boundary_precedes_provider_call(
-    seconds: float, kind: FailureKind | None
+@pytest.mark.parametrize(
+    "audio",
+    [synthetic_opus(125, granule=240000), b"not an Ogg stream"],
+    ids=["under-declared-duration", "provider-owned-format"],
+)
+async def test_downloaded_bytes_reach_provider_without_a_worker_duration_check(
+    audio: bytes,
 ) -> None:
     use_case, store, _, _, _ = await fixture()
-    use_case._files = FakeVoiceFileSource(synthetic_opus(seconds), calls=store.calls)
-    await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
-    assert store.state.voice_jobs[1].failure_kind == kind
-    assert ("transcriber.transcribe" in store.calls.items) == (kind is None)
+    store.state.voice_jobs[1] = replace(store.state.voice_jobs[1], duration_seconds=100)
+    use_case._files = FakeVoiceFileSource(audio, calls=store.calls)
+    result = await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
+    assert isinstance(result, Done)
+    assert store.state.voice_jobs[1].status == VoiceJobStatus.DONE
+    assert len(store.state.tasks) == 1
+    assert isinstance(use_case._transcriber, ScriptedTranscriber)
+    assert use_case._transcriber.audio == [audio]
 
 
-async def test_unreadable_audio_and_blank_transcript_are_final() -> None:
-    use_case, store, _, _, _ = await fixture()
-    use_case._files = FakeVoiceFileSource(b"bad")
-    await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
-    assert store.state.voice_jobs[1].failure_kind == FailureKind.UNSUPPORTED_AUDIO
+async def test_blank_transcript_is_final() -> None:
     use_case, store, _, _, _ = await fixture(transcript=" \n ")
     await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
     assert store.state.voice_jobs[1].failure_kind == FailureKind.EMPTY_TRANSCRIPT

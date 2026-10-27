@@ -207,10 +207,6 @@ async def test_failed_row_wins_payload_status(caplog: pytest.LogCaptureFixture) 
             "This voice message is larger than 10 MB. Please send a shorter one.",
         ),
         (
-            FailureKind.TOO_LONG,
-            "This voice message is longer than 2 minutes. Please send a shorter one.",
-        ),
-        (
             FailureKind.UNSUPPORTED_AUDIO,
             "I could not read this audio. Please send the voice message again.",
         ),
