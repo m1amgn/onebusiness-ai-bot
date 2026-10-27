@@ -70,3 +70,6 @@ class MessageGoneError(DomainError):
 
 class NotificationError(DomainError):
     pass
+
+
+NOTIFIER_ERRORS = (NotificationError, MessageGoneError, RecipientBlockedError, RetryAfterError)

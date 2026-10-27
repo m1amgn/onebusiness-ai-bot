@@ -16,3 +16,7 @@ def retry_delay_seconds(attempt: int) -> int:
     if attempt < 1:
         raise ValueError("attempt must be positive")
     return 2 << (attempt - 1)
+
+
+MAX_VOICE_SECONDS = 120
+MAX_VOICE_BYTES = 10_000_000

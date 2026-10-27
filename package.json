@@ -15,7 +15,7 @@
     "dev:web": "yarn workspace frontend run dev",
     "verify": "yarn check:size && yarn check:scripts && yarn verify:backend && yarn api:check && yarn verify:frontend",
     "verify:backend": "uv lock --check --directory backend && uv run --locked --directory backend ruff check . && uv run --locked --directory backend ruff format --check . && uv run --locked --directory backend mypy && uv run --locked --directory backend lint-imports && uv run --locked --directory backend pytest -m \"not integration\" && uv run --locked --directory backend pytest -m integration",
-    "check:scripts": "node --test scripts/ && yarn --cwd frontend prettier --check --config .prettierrc.json ../scripts",
+    "check:scripts": "node --test --test-concurrency=1 scripts/ && yarn --cwd frontend prettier --check --config .prettierrc.json ../scripts",
     "test:unit": "uv run --locked --directory backend pytest -m \"not integration\" && yarn workspace frontend test",
     "check:size": "node scripts/check-file-size.mjs",
     "api:check": "node scripts/check-api-schema.mjs",
@@ -27,6 +27,6 @@
     "dev:seed": "uv run --locked --directory backend python -m taskbot.entrypoints.seed",
     "live:extraction": "uv run --locked --directory backend python tests/acceptance/replay_s9.py",
     "dev:worker": "uv run --locked --directory backend python -m taskbot.entrypoints.worker",
-    "dev:bot": "node scripts/not-built.mjs dev:bot S4"
+    "dev:bot": "uv run --locked --directory backend python -m taskbot.entrypoints.bot"
   }
 }

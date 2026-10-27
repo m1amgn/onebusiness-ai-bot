@@ -5,6 +5,9 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+# Cold SDK imports and complete test collection can exceed the normal process budget.
+COLD_START_TIMEOUT_SECONDS = 120
+
 
 @dataclass(frozen=True)
 class ProcessResult:

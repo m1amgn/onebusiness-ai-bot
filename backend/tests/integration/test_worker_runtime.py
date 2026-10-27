@@ -9,6 +9,7 @@ import pytest
 from taskbot.infrastructure.celery.app import create_celery_app
 from taskbot.infrastructure.redis.client import create_redis_client
 from taskbot.infrastructure.redis.subscription import subscribe_user_events
+from tests.processes import COLD_START_TIMEOUT_SECONDS
 from tests.redis_sessions import RedisSession
 from tests.workers import read_records, running_worker, wait_records
 
@@ -64,7 +65,7 @@ async def test_failed_runtime_runs_no_task_restores_message_and_allows_healthy_r
         "transcribe", namespace, log_dir=tmp_path, fail_runtime=True, wait_ready=False
     ) as broken:
         assert not read_records(log, "start")
-        await asyncio.wait_for(broken.process.wait(), 15)
+        await asyncio.wait_for(broken.process.wait(), COLD_START_TIMEOUT_SECONDS)
         assert "Worker child runtime failed" in broken.log_path.read_text()
     async with create_redis_client(redis_session.broker_url) as broker:
         assert await cast(Awaitable[int], broker.llen(namespace + "transcription")) == 1

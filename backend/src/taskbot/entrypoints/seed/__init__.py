@@ -5,7 +5,7 @@ from taskbot.application.create_tasks import (
     CreateTasksFromMessage,
     DuplicateMessage,
 )
-from taskbot.application.dashboard_token import IssueDashboardToken
+from taskbot.application.dashboard_token import IssueDashboardToken, dashboard_link
 from taskbot.application.publishing import publish_events
 from taskbot.application.register_user import RegisterOrGetUser
 from taskbot.domain.errors import DomainError
@@ -84,7 +84,7 @@ async def seed(ports: SeedPorts, telegram_user_id: int, text: str, message_id: i
         user_id=issued.user_id,
         titles=titles,
         token=issued.token,
-        link=f"{ports.web_base_url}/#token={issued.token}",
+        link=dashboard_link(ports.web_base_url, issued.token),
         duplicate=duplicate,
         events=committed_events,
     )

@@ -1,0 +1,410 @@
+[
+  {
+    "row": "B1",
+    "replies": [
+      "Task created: Buy milk"
+    ],
+    "messages": 1,
+    "tasks": 1,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [
+      "task.created"
+    ],
+    "degraded": [
+      false
+    ],
+    "source_texts": [
+      "Buy milk"
+    ],
+    "token_rotated": false,
+    "reply_to": [
+      1
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B2",
+    "replies": [
+      "Task created: Call the bank about the card\nThe language model was unavailable, so the title is taken from your text."
+    ],
+    "messages": 1,
+    "tasks": 1,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [
+      "task.created"
+    ],
+    "degraded": [
+      true
+    ],
+    "source_texts": [
+      "Call the bank about the card"
+    ],
+    "token_rotated": false,
+    "reply_to": [
+      2
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B3",
+    "replies": [
+      "There is no text to make a task from."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      3
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B4",
+    "replies": [
+      "Transcribing your voice message…"
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 1,
+    "jobs": 1,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      4
+    ],
+    "accepted_voice": [
+      {
+        "status": "queued",
+        "ack_message_id": 4
+      }
+    ]
+  },
+  {
+    "row": "B5",
+    "replies": [
+      "This voice message is longer than 2 minutes. Please send a shorter one."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      5
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B6",
+    "replies": [
+      "This voice message is larger than 10 MB. Please send a shorter one."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      6
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B7",
+    "replies": [
+      "Transcribing your voice message…"
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 1,
+    "jobs": 1,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      7
+    ],
+    "accepted_voice": [
+      {
+        "status": "queued",
+        "ack_message_id": 7
+      }
+    ]
+  },
+  {
+    "row": "B8",
+    "replies": [],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [],
+    "accepted_voice": []
+  },
+  {
+    "row": "B9",
+    "replies": [],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [],
+    "accepted_voice": []
+  },
+  {
+    "row": "B10",
+    "replies": [
+      "Your task board: http://localhost:5173/#token=<token>\nKeep this link private. A new /dashboard link signs out other devices."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [
+      "auth.revoked"
+    ],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": true,
+    "reply_to": [
+      10
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B11",
+    "replies": [
+      "I work only in a private chat."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      11
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B12",
+    "replies": [],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [],
+    "accepted_voice": []
+  },
+  {
+    "row": "B13",
+    "replies": [
+      "I understand text and voice messages only."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      13
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B14",
+    "replies": [
+      "Unknown command. Send a text or a voice message to create a task; /dashboard opens your tasks."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      14
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B15",
+    "replies": [],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [],
+    "accepted_voice": []
+  },
+  {
+    "row": "B16",
+    "replies": [
+      "Task created: Buy bread"
+    ],
+    "messages": 1,
+    "tasks": 1,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [
+      "task.created"
+    ],
+    "degraded": [
+      false
+    ],
+    "source_texts": [
+      "Buy bread"
+    ],
+    "token_rotated": false,
+    "reply_to": [
+      16
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B17",
+    "replies": [
+      "Transcribing your voice message…"
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 1,
+    "jobs": 1,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      17
+    ],
+    "accepted_voice": [
+      {
+        "status": "queued",
+        "ack_message_id": 13
+      }
+    ]
+  },
+  {
+    "row": "B18",
+    "replies": [
+      "Send me a text or a voice message and I will turn it into a task.\n/dashboard – a private link to your task board.\nTranscription: whisper_server. Task extraction: heuristic."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      18
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B19",
+    "replies": [
+      "Send me a text or a voice message and I will turn it into a task.\n/dashboard – a private link to your task board.\nTranscription: openai (no API key, voice messages are unavailable). Task extraction: heuristic (no Anthropic API key)."
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      19
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B19b",
+    "replies": [
+      "Task created: Buy eggs\nThe language model was unavailable, so the title is taken from your text."
+    ],
+    "messages": 1,
+    "tasks": 1,
+    "voice_jobs": 0,
+    "jobs": 0,
+    "events": [
+      "task.created"
+    ],
+    "degraded": [
+      true
+    ],
+    "source_texts": [
+      "Buy eggs"
+    ],
+    "token_rotated": false,
+    "reply_to": [
+      20
+    ],
+    "accepted_voice": []
+  },
+  {
+    "row": "B19c",
+    "replies": [
+      "Transcribing your voice message…"
+    ],
+    "messages": 0,
+    "tasks": 0,
+    "voice_jobs": 1,
+    "jobs": 1,
+    "events": [],
+    "degraded": [],
+    "source_texts": [],
+    "token_rotated": false,
+    "reply_to": [
+      21
+    ],
+    "accepted_voice": [
+      {
+        "status": "queued",
+        "ack_message_id": 17
+      }
+    ]
+  }
+]
