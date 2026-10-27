@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 
+from aiogram.types import BotCommand
+
 from taskbot.application.accept_voice import AcceptVoiceMessage
 from taskbot.application.create_tasks import CreateTasksFromMessage
 from taskbot.application.dashboard_token import IssueDashboardToken
+from taskbot.application.list_tasks import ListCurrentTasks, ListTasks
 from taskbot.application.register_user import RegisterOrGetUser
 from taskbot.application.replies import START
 from taskbot.domain.ports.messaging import EventPublisher, JobQueue
@@ -15,6 +18,12 @@ from taskbot.infrastructure.settings.bot import BotSettings
 from taskbot.infrastructure.settings.transcription import openai_transcription_unavailable
 from taskbot.infrastructure.tokens import SecretsTokenGenerator, Sha256TokenHasher
 
+BOT_COMMANDS = [
+    BotCommand(command="start", description="How to use this bot"),
+    BotCommand(command="tasks", description="Your current tasks"),
+    BotCommand(command="dashboard", description="A private link to your task board"),
+]
+
 
 @dataclass(frozen=True, slots=True)
 class BotPorts:
@@ -25,6 +34,8 @@ class BotPorts:
     publisher: EventPublisher
     web_base_url: str
     start_message: str
+    register: RegisterOrGetUser
+    list_current_tasks: ListCurrentTasks
 
 
 def start_text(settings: BotSettings) -> str:
@@ -55,4 +66,6 @@ def build_bot_ports(
         publisher,
         settings.web_base_url,
         start_text(settings),
+        register,
+        ListCurrentTasks(ListTasks(uows)),
     )

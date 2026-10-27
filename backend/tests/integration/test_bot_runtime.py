@@ -7,8 +7,8 @@ from collections import Counter
 
 import pytest
 from aiogram import Dispatcher
-from aiogram.exceptions import TelegramConflictError
-from aiogram.methods import GetUpdates
+from aiogram.exceptions import TelegramConflictError, TelegramNetworkError
+from aiogram.methods import GetUpdates, SetMyCommands
 from aiohttp import ClientConnectionError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -35,6 +35,79 @@ def bot_harness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> BotHarness:
     return configure_bot(database_url, redis_session, monkeypatch)
+
+
+async def test_private_command_menu_is_registered_once_before_polling(
+    bot_harness: BotHarness,
+) -> None:
+    owned = bot_harness
+    owned.session.stop_on_poll = True
+    async with asyncio.timeout(20):
+        assert await bot_cli.run(owned.settings) == 0
+    assert owned.session.methods.count("setMyCommands") == 1
+    index = owned.session.methods.index("setMyCommands")
+    assert (
+        owned.session.methods.index("deleteWebhook")
+        < index
+        < owned.session.methods.index("getUpdates")
+    )
+    assert owned.session.requests[index].model_dump(exclude_none=True) == {
+        "commands": [
+            {"command": "start", "description": "How to use this bot"},
+            {"command": "tasks", "description": "Your current tasks"},
+            {"command": "dashboard", "description": "A private link to your task board"},
+        ],
+        "scope": {"type": "all_private_chats"},
+    }
+    assert owned.session.timeouts[index] == 10
+
+
+@pytest.mark.parametrize("kind", ["network", "timeout", "client"])
+async def test_menu_failure_logs_safely_and_still_polls(
+    bot_harness: BotHarness, caplog: pytest.LogCaptureFixture, kind: str
+) -> None:
+    owned = bot_harness
+    private_text = "private synthetic Telegram error"
+    errors = {
+        "network": TelegramNetworkError(method=SetMyCommands(commands=[]), message=private_text),
+        "timeout": TimeoutError(private_text),
+        "client": ClientConnectionError(private_text),
+    }
+    error = errors[kind]
+    owned.session.request_errors["setMyCommands"] = error
+    owned.session.stop_on_poll = True
+    with caplog.at_level(logging.WARNING, logger=bot_cli.__name__):
+        async with asyncio.timeout(20):
+            assert await bot_cli.run(owned.settings) == 0
+    assert "getUpdates" in owned.session.methods
+    assert owned.session.methods.count("setMyCommands") == 1
+    assert any(type(error).__name__ in record.message for record in caplog.records)
+    assert private_text not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_cancellation_during_menu_registration_closes_owned_resources(
+    bot_harness: BotHarness,
+) -> None:
+    owned = bot_harness
+    gate = asyncio.Event()
+    registered = asyncio.Event()
+    owned.session.request_gates["setMyCommands"] = gate
+    owned.session.request_started["setMyCommands"] = registered
+    task = asyncio.create_task(bot_cli.run(owned.settings))
+    try:
+        async with asyncio.timeout(20):
+            await registered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert "getUpdates" not in owned.session.methods
+        assert owned.closed == ["session", "extractor", "queue", "app", "engine", "redis"]
+    finally:
+        gate.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_two_messages_share_owned_clients_and_close_in_order(

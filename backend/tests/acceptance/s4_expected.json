@@ -248,7 +248,7 @@
   {
     "row": "B14",
     "replies": [
-      "Unknown command. Send a text or a voice message to create a task; /dashboard opens your tasks."
+      "Unknown command. Send a text or a voice message to create a task; /tasks lists your current tasks, /dashboard opens your board."
     ],
     "messages": 0,
     "tasks": 0,
@@ -327,7 +327,7 @@
   {
     "row": "B18",
     "replies": [
-      "Send me a text or a voice message and I will turn it into a task.\n/dashboard – a private link to your task board.\nTranscription: whisper_server. Task extraction: heuristic."
+      "Send me a text or a voice message and I will turn it into a task.\n/tasks – your current tasks.\n/dashboard – a private link to your task board.\nTranscription: whisper_server. Task extraction: heuristic."
     ],
     "messages": 0,
     "tasks": 0,
@@ -345,7 +345,7 @@
   {
     "row": "B19",
     "replies": [
-      "Send me a text or a voice message and I will turn it into a task.\n/dashboard – a private link to your task board.\nTranscription: openai (no API key, voice messages are unavailable). Task extraction: heuristic (no Anthropic API key)."
+      "Send me a text or a voice message and I will turn it into a task.\n/tasks – your current tasks.\n/dashboard – a private link to your task board.\nTranscription: openai (no API key, voice messages are unavailable). Task extraction: heuristic (no Anthropic API key)."
     ],
     "messages": 0,
     "tasks": 0,

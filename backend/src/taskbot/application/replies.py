@@ -1,11 +1,13 @@
 """Canonical plain-text replies shared by bot and worker use cases."""
 
+from taskbot.application.list_tasks import CurrentTasks
 from taskbot.domain.messages import InboundMessage
 from taskbot.domain.tasks import Task
 from taskbot.domain.voice_jobs import FailureKind, TranscriptionProvider, VoiceJob, VoiceJobStatus
 
 START = (
     "Send me a text or a voice message and I will turn it into a task.\n"
+    "/tasks – your current tasks.\n"  # noqa: RUF001 - Owner-approved copy.
     "/dashboard – a private link to your task board.\n"  # noqa: RUF001 - Owner-approved copy.
     "Transcription: {provider}. Task extraction: {extractor}."
 )
@@ -21,8 +23,14 @@ DASHBOARD = (
 )
 NOT_PRIVATE = "I work only in a private chat."
 UNKNOWN_COMMAND = (
-    "Unknown command. Send a text or a voice message to create a task; /dashboard opens your tasks."
+    "Unknown command. Send a text or a voice message to create a task; "
+    "/tasks lists your current tasks, /dashboard opens your board."
 )
+CURRENT_TASKS_HEADER = "Your current tasks:"
+IN_PROGRESS_HEADER = "In progress:"
+PENDING_HEADER = "Pending:"
+MORE_TASKS = "More tasks on your board: /dashboard"
+NO_CURRENT_TASKS = "You have no current tasks. Send a text or a voice message to create one."
 UNSUPPORTED_MESSAGE = "I understand text and voice messages only."
 SOMETHING_WENT_WRONG = "Something went wrong. Please try again."
 TASK_CREATED_NO_TITLE = "Task created."
@@ -50,6 +58,21 @@ VOICE_FAILURE_TEXT = {
     FailureKind.INTERNAL: VOICE_FAILED,
     FailureKind.STUCK: VOICE_FAILED,
 }
+
+
+def current_tasks_text(current: CurrentTasks) -> str:
+    if not current.in_progress and not current.pending:
+        return NO_CURRENT_TASKS
+    sections = [CURRENT_TASKS_HEADER]
+    for header, tasks in (
+        (IN_PROGRESS_HEADER, current.in_progress),
+        (PENDING_HEADER, current.pending),
+    ):
+        if tasks:
+            sections.append("\n".join([header, *(f"- {task.title}" for task in tasks)]))
+    if current.more:
+        sections.append(MORE_TASKS)
+    return "\n\n".join(sections)
 
 
 def task_created_text(title: str, degraded: bool) -> str:

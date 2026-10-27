@@ -245,6 +245,18 @@ timeouts and bounded retries limit those operations; queued sends add executor b
 
 ## Bot runtime
 
+The private /tasks command registers the sender through RegisterOrGetUser and
+calls ListCurrentTasks, which composes the canonical ListTasks twice. Show at
+most 15 titles: In progress first, then Pending, newest message first per group.
+Completed tasks are omitted. All three units of work close before the reply.
+The 120-code-point title bound keeps the worst-case reply at 3726 UTF-16 units.
+Keep the copy and formatter in application/replies.py; listing never rotates
+the dashboard token or publishes an event. The two reads are separate snapshots.
+Register BOT_COMMANDS once after getMe/deleteWebhook with the all-private-chats
+scope and request_timeout=10. Menu failures log exception classes and preserve
+polling; cancellation propagates. tests/acceptance/replay_s10.py pins T1-T10;
+test_bot_runtime.py covers menu startup (T11) against isolated PostgreSQL/Redis.
+
 Voice acceptance lives in application/accept_voice.py. It commits the job before
 acknowledging, stores the acknowledgement in a second unit of work, then enqueues
 and stamps it in a third. No transaction spans Telegram or the broker. Metadata

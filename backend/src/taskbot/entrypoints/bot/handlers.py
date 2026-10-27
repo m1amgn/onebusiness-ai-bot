@@ -69,6 +69,12 @@ async def handle_dashboard(message: Message, ports: BotPorts) -> None:
     )
 
 
+async def handle_tasks(message: Message, ports: BotPorts) -> None:
+    user = await ports.register.execute(identity(message))
+    current = await ports.list_current_tasks.execute(user.user.id)
+    await reply(message, ports, replies.current_tasks_text(current))
+
+
 async def handle_unknown(message: Message, ports: BotPorts) -> None:
     await reply(message, ports, replies.UNKNOWN_COMMAND)
 
@@ -145,6 +151,7 @@ def create_dispatcher(ports: BotPorts, in_flight: InFlightUpdates) -> Dispatcher
     router.message.register(handle_nonprivate, F.chat.type != ChatType.PRIVATE)
     router.message.register(handle_start, F.text, Command("start"))
     router.message.register(handle_dashboard, F.text, Command("dashboard"))
+    router.message.register(handle_tasks, F.text, Command("tasks"))
     router.message.register(handle_unknown, F.text.startswith("/"))
     router.message.register(handle_text, F.text)
     router.message.register(handle_voice, F.voice)

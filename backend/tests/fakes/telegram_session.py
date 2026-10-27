@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods.base import TelegramMethod, TelegramType
+from pydantic import BaseModel
 
 
 class FakeTelegramSession(BaseSession):
@@ -16,11 +17,14 @@ class FakeTelegramSession(BaseSession):
         self.responses = responses if responses is not None else deque()
         self.methods: list[str] = []
         self.payloads: list[dict[str, object]] = []
+        # Keep defaulted SDK discriminators that exclude_unset omits from payloads.
+        self.requests: list[BaseModel] = []
         self.timeouts: list[int | None] = []
         self.chunks = [b"audio"]
         self.stream_error: Exception | None = None
         self.stream_gate: asyncio.Event | None = None
         self.request_gates: dict[str, asyncio.Event] = {}
+        self.request_started: dict[str, asyncio.Event] = {}
         self.request_errors: dict[str, Exception] = {}
         self.started: asyncio.Event = asyncio.Event()
         self.downloads = 0
@@ -37,9 +41,12 @@ class FakeTelegramSession(BaseSession):
     ) -> TelegramType:
         name = method.__api_method__
         self.methods.append(name)
+        self.requests.append(method)
         self.payloads.append(method.model_dump(exclude_none=True, exclude_unset=True))
         self.timeouts.append(timeout)
         self.started.set()
+        if event := self.request_started.get(name):
+            event.set()
         async with asyncio.timeout(timeout if timeout is not None else self.timeout):
             if name in self.request_gates:
                 await self.request_gates[name].wait()

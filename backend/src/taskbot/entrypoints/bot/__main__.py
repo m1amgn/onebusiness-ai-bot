@@ -8,13 +8,14 @@ from urllib.parse import urlsplit
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import AiogramError, TelegramUnauthorizedError
+from aiogram.types import BotCommandScopeAllPrivateChats
 from aiohttp import ClientError
 from redis.asyncio import Redis
 from redis.exceptions import LockNotOwnedError, RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from taskbot.entrypoints.bot import BotPorts, build_bot_ports
+from taskbot.entrypoints.bot import BOT_COMMANDS, BotPorts, build_bot_ports
 from taskbot.entrypoints.bot.handlers import create_dispatcher
 from taskbot.entrypoints.bot.runtime import (
     POLLING_FAILURE_SECONDS,
@@ -153,6 +154,12 @@ async def _open_resources_and_run(
         raise BotStartupError("Telegram rejected TELEGRAM_BOT_TOKEN.") from None
     except AiogramError, TimeoutError, ClientError:
         raise BotStartupError("Cannot reach api.telegram.org.") from None
+    try:
+        await bot.set_my_commands(
+            BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats(), request_timeout=10
+        )
+    except (AiogramError, TimeoutError, ClientError) as error:
+        logger.warning("Telegram command menu registration failed (%s)", type(error).__name__)
 
     def uows() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(sessions)

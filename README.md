@@ -69,6 +69,10 @@ webhook without discarding pending updates.
 
 Private text creates one task and replies with its title. Task titles retain the
 message's language; bot replies are English. `/start` shows the selected providers.
+`/tasks` lists up to 15 current tasks, with In progress first and Pending second.
+Each group shows the newest messages first. Completed tasks stay on the dashboard.
+When more current tasks exist, the reply points to `/dashboard`. Listing tasks
+does not issue a new link or change a task. Changes and deletion stay on the dashboard.
 `/dashboard` issues a personal link and invalidates older links. Keep the link
 private. Two concurrent requests can deliver the older link last; request another
 link if needed. A failed reply after rotation also needs a new `/dashboard`.
@@ -126,10 +130,15 @@ voice messages stopped at the acknowledgement, because transcription is a later 
 SIGINT stopped the bot in about 3 s and released its polling lock. Offline handler,
 adapter and lifecycle checks use a fake Telegram transport; integration checks use
 real isolated PostgreSQL and Redis.
+The `/tasks` command and the private `/start`, `/tasks`, `/dashboard` menu have
+offline and isolated-store coverage; they have not been checked live on Telegram.
+The bot registers that menu once at startup, with a ten-second request timeout.
+A registration failure logs a warning and polling continues.
 Run the synthetic acceptance replay without credentials:
 
 ```sh
 TASKBOT_ENV_FILE=/dev/null uv run --locked --directory backend python tests/acceptance/replay_s4.py
+TASKBOT_ENV_FILE=/dev/null uv run --locked --directory backend python tests/acceptance/replay_s10.py
 ```
 
 ## Development tasks
