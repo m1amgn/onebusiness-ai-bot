@@ -408,8 +408,18 @@ the synthetic fixture and a recording Telegram adapter. Start `yarn dev:whisper`
 first. Normal `yarn verify` deselects these tests unless the marker is named
 explicitly. Its offline probe tests forbid real provider calls.
 
-S5 live verification is pending: the whisper worker flow, one OpenAI success call,
-the test-bot voice flow and 30/120-second Russian timing samples are not yet claimed.
+S5 live verification on 2026-10-27: the real-worker Whisper flow passed with a
+non-empty transcript, a stored task and a recorded notification edit. On Apple M3,
+whisper-server large-v3-turbo-q5_0 with Metal transcribed synthetic Russian
+recordings of 30.02 and 120.02 seconds in 4.036 and 10.983 seconds. These timings describe this
+model and hardware with repeated synthetic speech; they do not measure accuracy.
+The separate OpenAI check returned non-empty text from `gpt-transcribe` for the
+3.82-second synthetic fixture in 2.526 seconds. The first key returned
+`provider_unavailable`; the owner replaced it and authorized one successful repeat.
+The test-bot voice flow did not pass: the worker rejected a real Telegram voice
+note as `unsupported_audio` before contacting Whisper, and created no task.
+The owner chose to remove the packet parser and trust Telegram's declared
+duration (S5-D9). The design amendment and a successful bot rerun remain pending.
 
 ## Backend image
 
