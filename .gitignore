@@ -17,3 +17,4 @@ __pycache__/
 *.tsbuildinfo
 .vite/
 frontend/.api-check/
+*.dump
