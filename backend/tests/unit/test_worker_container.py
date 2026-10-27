@@ -135,6 +135,30 @@ asyncio.run(check())
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+async def test_configured_worker_settings_validate_without_importing_the_telegram_sdk() -> None:
+    result = await run_process(
+        sys.executable,
+        "-c",
+        """
+import sys
+from taskbot.entrypoints.worker.settings import load_worker_settings
+from taskbot.infrastructure.settings.worker import TranscribeWorkerSettings, WorkerSettings
+for role, model in (("notify", WorkerSettings), ("transcribe", TranscribeWorkerSettings)):
+    settings = model(
+        worker_role=role,
+        database_url="postgresql+asyncpg://test:test@127.0.0.1:1/taskbot_test_unused",
+        telegram_bot_token="123:synthetic",
+        _env_file=None,
+    )
+    assert settings.telegram_bot_token.get_secret_value() == "123:synthetic"
+    assert "aiogram" not in sys.modules, "settings validation imported the Telegram SDK"
+""",
+        cwd=BACKEND_ROOT,
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 async def test_factory_lifetimes_and_interrupt_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -361,8 +361,9 @@ cleanup. start_child catches BaseException, closes resources independently,
 signals only its still-recorded actual parent, then always os._exit(70). Tasks use
 runtime.run_async; interrupted coroutines are cancelled and drained before reuse.
 Shutdown closes the job queue synchronously before Redis and the SQL engine.
-Keep aiogram imports inside token validation and configured Telegram composition;
-workers without a token must not pay that SDK import cost in either launcher pass.
+Keep aiogram imports inside configured Telegram composition. The shared token
+shape check matches the SDK without importing its model graph. Neither launcher
+pass imports aiogram, even when a token is configured; the owned child builds Bot.
 
 Transcription, notification and sweep tasks validate keyword payloads and call
 the corresponding application use cases. Transcription has a 400-second attempt

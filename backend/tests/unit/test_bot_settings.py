@@ -46,3 +46,39 @@ def test_openai_key_presence_ignores_blank_keys(key: str | None, present: bool) 
 
     settings = TranscriptionSettingsMixin(openai_api_key=None if key is None else SecretStr(key))
     assert has_openai_key(settings) is present
+
+
+@pytest.mark.parametrize(
+    ("token", "valid"),
+    [
+        ("123:synthetic", True),
+        ("123:a:b", True),
+        ("٠١:synthetic", True),
+        ("²:synthetic", True),
+        ("123:zero\u200bwidth", True),
+        ("123", False),
+        (":synthetic", False),
+        ("abc:synthetic", False),
+        ("123:", False),
+        ("123:has space", False),
+        ("123:line\n", False),
+        ("123:tab\t", False),
+        ("123:nonbreaking\u00a0space", False),
+    ],
+)
+def test_token_shape_check_matches_the_sdk_without_loading_it_at_startup(
+    token: str, valid: bool
+) -> None:
+    from aiogram.utils.token import TokenValidationError, validate_token
+
+    from taskbot.infrastructure.settings.telegram import validate_bot_token
+
+    value = SecretStr(token)
+    if valid:
+        assert validate_token(token)
+        assert validate_bot_token(value) is value
+    else:
+        with pytest.raises(TokenValidationError):
+            validate_token(token)
+        with pytest.raises(ValueError, match=r"^malformed token$"):
+            validate_bot_token(value)
