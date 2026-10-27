@@ -26,6 +26,7 @@
     "db:migrate": "uv run --locked --directory backend alembic upgrade head",
     "dev:seed": "uv run --locked --directory backend python -m taskbot.entrypoints.seed",
     "live:extraction": "uv run --locked --directory backend python tests/acceptance/replay_s9.py",
+    "live:transcription": "uv run --locked --directory backend python tests/acceptance/live_transcription.py",
     "dev:worker": "uv run --locked --directory backend python -m taskbot.entrypoints.worker",
     "dev:bot": "uv run --locked --directory backend python -m taskbot.entrypoints.bot"
   }

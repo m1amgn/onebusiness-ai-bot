@@ -1,13 +1,13 @@
 from typing import Literal
 
-from pydantic import HttpUrl, SecretStr, field_validator
+from pydantic import SecretStr, field_validator
 
 from taskbot.infrastructure.settings.base import BaseAppSettings
 from taskbot.infrastructure.settings.database import DatabaseSettingsMixin
 from taskbot.infrastructure.settings.extractor import ExtractorSettingsMixin
 from taskbot.infrastructure.settings.redis import RedisSettingsMixin
 from taskbot.infrastructure.settings.telegram import validate_bot_token
-from taskbot.infrastructure.settings.transcription import TranscriptionSettingsMixin
+from taskbot.infrastructure.settings.transcription import TranscriberSettingsMixin
 
 
 class BrokerSettings(BaseAppSettings, RedisSettingsMixin):
@@ -24,6 +24,5 @@ class WorkerSettings(BaseAppSettings, DatabaseSettingsMixin, RedisSettingsMixin)
         return None if value is None else validate_bot_token(value)
 
 
-class TranscribeWorkerSettings(WorkerSettings, TranscriptionSettingsMixin, ExtractorSettingsMixin):
-    openai_transcription_model: str = "gpt-transcribe"
-    whisper_server_url: HttpUrl = HttpUrl("http://127.0.0.1:8178")
+class TranscribeWorkerSettings(WorkerSettings, TranscriberSettingsMixin, ExtractorSettingsMixin):
+    pass

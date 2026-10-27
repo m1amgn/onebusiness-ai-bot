@@ -21,10 +21,16 @@ from tests.integration.settings import InfraTestSettings
 from tests.redis_sessions import RedisSession, drop_abandoned_namespaces, open_redis_session
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     for item in items:
         if item.path.is_relative_to(Path(__file__).parent / "integration"):
             item.add_marker(pytest.mark.integration)
+    if "live_whisper" in config.option.markexpr:
+        return
+    deselected = [item for item in items if item.get_closest_marker("live_whisper")]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = [item for item in items if not item.get_closest_marker("live_whisper")]
 
 
 def ensure_reachable(service: str, url: str, default_port: int) -> None:
@@ -42,7 +48,10 @@ def ensure_reachable(service: str, url: str, default_port: int) -> None:
 def pytest_collection_finish(session: pytest.Session) -> None:
     if session.config.option.collectonly:
         return
-    if not any(item.get_closest_marker("integration") for item in session.items):
+    if not any(
+        item.get_closest_marker("integration") or item.get_closest_marker("live_whisper")
+        for item in session.items
+    ):
         return
     settings = InfraTestSettings()
     ensure_reachable("PostgreSQL", str(settings.database_url), 5432)

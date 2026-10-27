@@ -11,7 +11,7 @@ from taskbot.infrastructure.settings.transcription import openai_transcription_u
 from taskbot.infrastructure.transcription.fake import FakeTranscriber, UnavailableTranscriber
 
 if TYPE_CHECKING:
-    from taskbot.infrastructure.settings.worker import TranscribeWorkerSettings
+    from taskbot.infrastructure.settings.transcription import TranscriberSettingsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _quiet_http_loggers() -> None:
 
 
 @asynccontextmanager
-async def open_transcriber(settings: TranscribeWorkerSettings) -> AsyncIterator[Transcriber]:
+async def open_transcriber(settings: TranscriberSettingsMixin) -> AsyncIterator[Transcriber]:
     if settings.transcription_provider == TranscriptionProvider.FAKE:
         yield FakeTranscriber()
         return

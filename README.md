@@ -5,8 +5,8 @@ A task-management application. Users create tasks by sending text or voice messa
 The domain core and PostgreSQL persistence are available, with migrations and a
 command to create development tasks. The API serves authenticated task pages,
 status changes and real-time events. The dashboard displays a live task board with
-desktop columns and phone tabs. The Telegram bot accepts text and queues voice
-messages. The worker runtime is available; transcription handlers arrive later.
+desktop columns and phone tabs. The Telegram bot accepts text and voice messages.
+Workers transcribe recordings, create tasks, notify users and recover stalled jobs.
 
 ## Local setup
 
@@ -75,12 +75,15 @@ link if needed. A failed reply after rotation also needs a new `/dashboard`.
 
 A voice message receives an acknowledgement, then enters the transcription queue.
 The limits are 120 seconds and 10,000,000 bytes; exact limits pass. Missing size
-metadata is checked during download. Voice processing completes when the worker
-handlers are available. Failed enqueue attempts leave a recoverable database row.
+metadata is checked during download. The worker also measures Opus packet duration
+and allows one second of duration tolerance. Failed enqueue attempts leave a
+recoverable database row. A successful job edits the acknowledgement to the task
+title. A missing acknowledgement gets a new reply to the voice message.
 
 ```text
 text  -> extract -> commit task -> reply -> publish event
 voice -> commit job -> reply -> store reply id -> enqueue -> stamp
+worker -> download -> inspect -> transcribe -> extract -> commit -> notify
 ```
 
 Tasks come only from private chats. Commands in groups receive a private-chat
@@ -101,6 +104,9 @@ create another task. Resending as a new message creates a new task.
 automatically falls back to another provider. Missing OpenAI credentials are shown
 by `/start`; voice messages are still acknowledged. A missing Anthropic key uses
 the degraded heuristic and adds a fallback notice to text replies.
+Voice jobs without an OpenAI key end with an unavailable notice. Fake transcription
+creates a deterministic demo task and marks its notification as demo mode. Stored
+transcripts are limited to 4096 characters, cut at a word when possible.
 
 The bot renews its polling lock during startup and while draining. It publishes
 `heartbeat:bot` only after successful polling, under `REDIS_NAMESPACE` when set.
@@ -290,9 +296,10 @@ The launcher preserves Celery's main PID and sets the required multiprocessing
 flag on macOS. On macOS, use this command instead of starting Celery directly.
 The startup log shows the role, queue, node, broker with its password hidden,
 and Redis namespace. A missing Telegram token produces a warning; no token is
-required to start either role. Provider adapters and real job handlers arrive in S5.
-Until then, a worker warns that jobs without handlers will be discarded. Use only
-isolated test namespaces when testing this unfinished runtime on the shared broker.
+required to start either role. Processing real voice messages requires the same
+Telegram token as the bot. Transcribe owns one download, extraction and
+transcription client per child. Notify builds no extraction or transcription client.
+Use isolated test namespaces when testing on the shared broker.
 Run at most one development worker per role on each machine, from the worktree
 whose code should handle the jobs. Workers of one role also share a node name.
 `REDIS_NAMESPACE` is for test sessions; leave it empty in normal configuration.
@@ -308,7 +315,14 @@ names in an owned temporary root that the harness removes. Startup logs mask
 broker passwords and omit URL queries and fragments. A broker URL derived from
 `REDIS_URL` retains TLS options (`ssl_*`) and drops other client options; an
 explicit `CELERY_BROKER_URL` is kept unchanged. Worker tests use real Redis and test-only
-`s3test.*` tasks, without Telegram, transcription providers or database connections.
+`s3test.*` tasks for lifecycle checks. The voice-flow tests also use owned PostgreSQL
+databases, fake transcription and recording Telegram adapters. No ordinary test
+contacts a paid provider. Notify recovers stale jobs at startup and every 60 seconds.
+Transcription retries transient failures at most five times, with 2/4/8/16-second
+delays. OpenAI's 30-second timeout is transient; whisper-server's 300-second timeout
+is final. The full attempt has a 400-second budget and Celery limits of 420/450 seconds.
+Notification retries are capped at five attempts. Retry-after responses preserve
+their requested delay. Terminal failure texts stay in Telegram.
 Linux prefork, the delivered Compose stack and `restart: unless-stopped` are
 verified in S8.
 
@@ -375,7 +389,27 @@ curl -F file=@backend/tests/fixtures/voice-en.ogg -F response_format=json http:/
 Stop with Ctrl-C. The launcher forwards termination signals to the server and
 releases port 8178. Press Ctrl-C again to force a server that does not stop.
 The committed fixture is synthetic speech. No live Telegram or OpenAI integration
-is claimed. Claude extraction was checked with the synthetic replay above.
+is claimed by this transcription check. The earlier Telegram entry-point check is
+recorded in the bot section; Claude extraction used the synthetic replay above.
+
+Use the opt-in probe for one recording. It prints provider, transcript, measured
+audio duration and elapsed transcription time. Each OpenAI invocation makes one
+paid call. The provider model and URL use the same settings as the worker:
+
+```sh
+yarn --silent live:transcription --provider whisper_server
+yarn --silent live:transcription --provider openai
+yarn --silent live:transcription --provider whisper_server --file /path/to/synthetic.ogg
+uv run --locked --directory backend pytest -m live_whisper tests/live
+```
+
+The last command exercises real PostgreSQL, Redis, Celery and whisper-server with
+the synthetic fixture and a recording Telegram adapter. Start `yarn dev:whisper`
+first. Normal `yarn verify` deselects these tests unless the marker is named
+explicitly. Its offline probe tests forbid real provider calls.
+
+S5 live verification is pending: the whisper worker flow, one OpenAI success call,
+the test-bot voice flow and 30/120-second Russian timing samples are not yet claimed.
 
 ## Backend image
 

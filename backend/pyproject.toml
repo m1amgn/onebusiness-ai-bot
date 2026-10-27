@@ -93,7 +93,10 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--strict-markers"
-markers = ["integration: requires local PostgreSQL and Redis; never silently skipped"]
+markers = [
+  "integration: requires local PostgreSQL and Redis; never silently skipped",
+  "live_whisper: opt-in real whisper-server worker check; requires PostgreSQL and Redis",
+]
 
 [tool.importlinter]
 root_package = "taskbot"

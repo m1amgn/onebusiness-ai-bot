@@ -395,6 +395,16 @@ TASKBOT_ENV_FILE=/dev/null. Its frozen V1-V12 expectations are s5_expected.json.
 It uses real use cases and the packet parser with synthetic service doubles;
 provider factories and socket connections are forbidden during replay.
 
+The opt-in live probe is root yarn live:transcription --provider
+whisper_server|openai [--file path]. It reports synthetic transcript and timing;
+each OpenAI invocation is one paid call. TranscriberSettingsMixin owns provider
+client settings shared by the worker and probe. Bot settings retain only provider
+selection/key fields. The probe needs no database or Telegram configuration.
+tests/live/test_whisper_worker.py exercises the real whisper worker with recording
+Telegram adapters. pytest deselects live_whisper unless its marker is named in -m;
+ordinary verify must not call a live provider. Owner-entered credentials stay in
+this worktree's untracked .env. Record actual live results before closing S5.5.
+
 Celery 5.6 embedded Beat protects sys.__stdin__ when closing inherited descriptors,
 but Billiard first replaces sys.stdin. The worker-only compat fixup registers a
 public after-fork callback that aligns those wrappers in Beat before descriptor
