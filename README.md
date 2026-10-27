@@ -111,8 +111,13 @@ its heartbeat does not detect permanently stuck handlers. Allow at least 30 seco
 for shutdown in the delivered stack; verify the producer drain under the deployment's
 broker conditions.
 
-Telegram: not verified live. Offline handler, adapter and lifecycle checks use a
-fake Telegram transport; integration checks use real isolated PostgreSQL and Redis.
+Telegram: verified live on 2026-10-27 with a separate test bot against the local
+stack. Private `/start`, two texts, two voice messages, `/dashboard` and a sticker
+were each handled in 319-883 ms, from receiving the update to sending the reply; the
+voice messages stopped at the acknowledgement, because transcription is a later stage.
+SIGINT stopped the bot in about 3 s and released its polling lock. Offline handler,
+adapter and lifecycle checks use a fake Telegram transport; integration checks use
+real isolated PostgreSQL and Redis.
 Run the synthetic acceptance replay without credentials:
 
 ```sh
