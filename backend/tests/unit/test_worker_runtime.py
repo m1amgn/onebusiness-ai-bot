@@ -17,6 +17,11 @@ def worker_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TASKBOT_ENV_FILE", "/dev/null")
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("WORKER_ROLE", "transcribe")
+    monkeypatch.setenv("TRANSCRIPTION_PROVIDER", "fake")
+    monkeypatch.setenv("TASK_EXTRACTOR", "heuristic")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("TASKBOT_WORKER_MAIN_PID", "4567")
     monkeypatch.setattr(os, "getppid", lambda: 4567)
 
@@ -54,7 +59,7 @@ def test_broken_child_closes_partial_resources_and_always_exits(
     monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append(f"signal {pid} {sig}"))
     monkeypatch.setattr(os, "_exit", lambda status: calls.append(f"exit {status}"))
 
-    def fail(container: WorkerContainer) -> None:
+    async def fail(container: WorkerContainer) -> None:
         # Substitute only external close boundaries; the owner and fatal path stay real.
         monkeypatch.setattr(container, "redis", ClosedClient(calls))
         monkeypatch.setattr(container, "job_queue", FailingQueue())
@@ -73,12 +78,15 @@ def test_broken_child_closes_partial_resources_and_always_exits(
 def test_signal_and_logging_failures_cannot_skip_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
 
+    async def fail_build(container: WorkerContainer) -> None:
+        raise RuntimeError("injected failure")
+
     def fail(*args: object, **kwargs: object) -> None:
         raise RuntimeError("injected failure")
 
-    monkeypatch.setattr(runtime, "build_container", fail)
+    monkeypatch.setattr(runtime, "build_container", fail_build)
     monkeypatch.setattr(os, "kill", fail)
-    monkeypatch.setattr(runtime.logger, "exception", fail)
+    monkeypatch.setattr(runtime.logger, "error", fail)
     monkeypatch.setattr(os, "_exit", calls.append)
     runtime.start_child()
     assert calls == [70]
@@ -136,10 +144,10 @@ def test_interrupted_async_task_is_cancelled_and_drained(monkeypatch: pytest.Mon
 def test_settings_system_exit_uses_the_child_fatal_path(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    def fail_settings(model: object) -> None:
+    def fail_settings() -> None:
         raise SystemExit(2)
 
-    monkeypatch.setattr(runtime, "load_settings", fail_settings)
+    monkeypatch.setattr(runtime, "load_worker_settings", fail_settings)
     monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append(f"signal {pid}"))
     monkeypatch.setattr(os, "_exit", lambda status: calls.append(f"exit {status}"))
     runtime.start_child()

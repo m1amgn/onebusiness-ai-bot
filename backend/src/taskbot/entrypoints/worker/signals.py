@@ -5,17 +5,17 @@ from urllib.parse import urlsplit, urlunsplit
 
 from celery import signals
 
-from taskbot.domain.jobs import NotificationJob, TranscriptionJob
-from taskbot.entrypoints.settings import load_settings
+from taskbot.domain.jobs import NotificationJob, SweepJob, TranscriptionJob
 from taskbot.entrypoints.worker import runtime
-from taskbot.infrastructure.settings.worker import WorkerSettings
+from taskbot.entrypoints.worker.settings import load_worker_settings
+from taskbot.infrastructure.settings.worker import TranscribeWorkerSettings
 
 logger = logging.getLogger(__name__)
 
 
 def worker_init(sender: object = None, **kwargs: object) -> None:
     os.environ["TASKBOT_WORKER_MAIN_PID"] = str(os.getpid())
-    load_settings(WorkerSettings)
+    load_worker_settings()
     pool = getattr(sender, "pool_cls", None)
     if (
         sys.platform == "darwin"
@@ -39,7 +39,7 @@ def _broker_display(url: str) -> str:
 def worker_ready(sender: object = None, **kwargs: object) -> None:
     from taskbot.entrypoints.worker import app
 
-    settings = load_settings(WorkerSettings)
+    settings = load_worker_settings()
     job = TranscriptionJob if settings.worker_role == "transcribe" else NotificationJob
     logger.info(
         "Worker ready role=%s queue=%s node=%s broker=%s namespace=%s",
@@ -51,6 +51,17 @@ def worker_ready(sender: object = None, **kwargs: object) -> None:
     )
     if settings.telegram_bot_token is None:
         logger.warning("TELEGRAM_BOT_TOKEN is not set: Telegram calls will fail")
+    if isinstance(settings, TranscribeWorkerSettings):
+        logger.info(
+            "Worker providers provider=%s extractor=%s",
+            settings.transcription_provider,
+            settings.task_extractor,
+        )
+    else:
+        try:
+            app.send_task(SweepJob.name, kwargs=SweepJob().model_dump(mode="json"), expires=60)
+        except Exception as error:
+            logger.warning("Startup voice sweep enqueue failed (%s)", type(error).__name__)
     if job.name not in app.tasks:
         logger.warning(
             "No job handler is registered for queue %s: its jobs will be discarded", job.queue

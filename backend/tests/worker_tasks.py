@@ -93,9 +93,9 @@ def orphan_guard(**kwargs: object) -> None:
     threading.Thread(target=watch, name="test-worker-orphan-guard", daemon=True).start()
 
 
-def fail_build(container: WorkerContainer) -> None:
+async def fail_build(container: WorkerContainer) -> None:
     # Build first: the failure exercises ownership of an already-created Redis client.
-    original_build(container)
+    await original_build(container)
     raise RuntimeError("injected child runtime failure")
 
 

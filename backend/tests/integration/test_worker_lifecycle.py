@@ -48,7 +48,7 @@ async def test_role_workers_route_and_report_startup(
             ):
                 assert text in output
             assert output.count("TELEGRAM_BOT_TOKEN is not set") == 1
-            assert "No job handler is registered for queue" in output
+            assert "No job handler is registered for queue" not in output
             assert not any(text in output for text in ("NameError", "__wrapped__", "Traceback"))
     assert (await transcribe.cli_ping()).returncode != 0
     assert (await notify.cli_ping()).returncode != 0

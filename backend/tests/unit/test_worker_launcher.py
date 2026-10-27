@@ -14,7 +14,12 @@ from taskbot.entrypoints.worker.launcher import (
     launch,
     worker_environment,
 )
-from taskbot.infrastructure.settings.worker import BrokerSettings, WorkerSettings
+from taskbot.entrypoints.worker.settings import load_worker_settings
+from taskbot.infrastructure.settings.worker import (
+    BrokerSettings,
+    TranscribeWorkerSettings,
+    WorkerSettings,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:1/taskbot_test_0_00000000"
@@ -31,8 +36,66 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "REDIS_NAMESPACE",
         "REDIS_URL",
         "CELERY_BROKER_URL",
+        "TRANSCRIPTION_PROVIDER",
+        "TASK_EXTRACTOR",
+        "WHISPER_SERVER_URL",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TRANSCRIPTION_PROVIDER", "unknown"),
+        ("TASK_EXTRACTOR", "unknown"),
+        ("WHISPER_SERVER_URL", "not-a-url"),
+        ("TELEGRAM_BOT_TOKEN", "abc"),
+    ],
+)
+def test_transcribe_preflight_validates_its_settings_before_exec(
+    name: str,
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv(name, value)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(os, "execve", lambda executable, argv, env: calls.append(argv))
+    with pytest.raises(SystemExit) as caught:
+        launch(["transcribe"])
+    assert caught.value.code == 2
+    assert name in capsys.readouterr().err
+    assert not calls
+
+
+def test_notify_preflight_ignores_transcription_and_extraction_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKER_ROLE", "notify")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    for name in ("TRANSCRIPTION_PROVIDER", "TASK_EXTRACTOR", "WHISPER_SERVER_URL"):
+        monkeypatch.setenv(name, "unknown")
+    settings = load_worker_settings()
+    assert type(settings) is WorkerSettings
+    monkeypatch.setenv("WORKER_ROLE", "transcribe")
+    for name in ("TRANSCRIPTION_PROVIDER", "TASK_EXTRACTOR", "WHISPER_SERVER_URL"):
+        monkeypatch.delenv(name)
+    assert isinstance(load_worker_settings(), TranscribeWorkerSettings)
+
+
+def test_direct_preflight_never_reads_role_from_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("WORKER_ROLE=notify\nDATABASE_URL=" + DATABASE_URL + "\n")
+    monkeypatch.setenv("TASKBOT_ENV_FILE", str(dotenv))
+    with pytest.raises(SystemExit) as caught:
+        load_worker_settings()
+    assert caught.value.code == 2
+    assert "WORKER_ROLE" in capsys.readouterr().err
 
 
 def test_worker_settings_need_role_and_database_but_no_provider_or_token() -> None:

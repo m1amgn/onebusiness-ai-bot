@@ -6,8 +6,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 
-from taskbot.entrypoints.settings import load_settings
-from taskbot.infrastructure.settings.worker import WorkerSettings
+from taskbot.entrypoints.worker.settings import load_worker_settings
 
 
 def build_worker_argv(role: str, schedule_path: str) -> list[str]:
@@ -74,11 +73,10 @@ def _prepare_beat_directory(directory: Path) -> None:
 def launch(arguments: Sequence[str]) -> None:
     extra = list(arguments)
     role = extra.pop(0) if extra and not extra[0].startswith("-") else os.environ.get("WORKER_ROLE")
-    if role not in ("transcribe", "notify"):
-        print("Invalid configuration: WORKER_ROLE: choose transcribe or notify", file=sys.stderr)
-        raise SystemExit(2)
-    os.environ["WORKER_ROLE"] = role
-    settings = load_settings(WorkerSettings)
+    if role is not None:
+        os.environ["WORKER_ROLE"] = role
+    settings = load_worker_settings()
+    role = settings.worker_role
     schedule = beat_schedule_path(settings.redis_namespace)
     if role == "notify":
         _prepare_beat_directory(Path(schedule).parent)

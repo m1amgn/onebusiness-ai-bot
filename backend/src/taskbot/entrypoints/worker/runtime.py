@@ -5,10 +5,9 @@ import signal
 from collections.abc import Coroutine
 from contextlib import suppress
 
-from taskbot.entrypoints.settings import load_settings
 from taskbot.entrypoints.worker.container import WorkerContainer
 from taskbot.entrypoints.worker.container import build_container as build_container
-from taskbot.infrastructure.settings.worker import WorkerSettings
+from taskbot.entrypoints.worker.settings import load_worker_settings
 
 logger = logging.getLogger(__name__)
 _loop: asyncio.AbstractEventLoop | None = None
@@ -57,17 +56,17 @@ def _stop_main() -> None:
 def start_child() -> None:
     global _loop, _container
     try:
-        settings = load_settings(WorkerSettings)
+        settings = load_worker_settings()
         _loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_loop)
         _container = WorkerContainer(settings)
-        build_container(_container)
+        _loop.run_until_complete(build_container(_container))
     except BaseException as error:
         try:
             with suppress(BaseException):
                 close_child()
             with suppress(BaseException):
-                logger.exception("Worker child runtime failed: %s", error)
+                logger.error("Worker child runtime failed (%s)", type(error).__name__)
             _stop_main()
         finally:
             os._exit(70)

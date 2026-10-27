@@ -1,6 +1,8 @@
 import asyncio
 import socket
+import sys
 import threading
+from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, PropertyMock
 
@@ -13,6 +15,9 @@ from taskbot.domain.jobs import NotificationJob, SweepJob, TranscriptionJob
 from taskbot.domain.ports.messaging import JobQueue
 from taskbot.infrastructure.celery.app import create_celery_app
 from taskbot.infrastructure.celery.job_queue import CeleryJobQueue
+from tests.processes import COLD_START_TIMEOUT_SECONDS, run_process
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("namespace", ["", "taskbot_test_1_ab12cd34:t1:"])
@@ -57,9 +62,39 @@ def test_factory_has_exact_shared_configuration_without_connecting(
             },
         }
         assert {key: app.conf[key] for key in expected} == expected
-        assert not ({TranscriptionJob.name, NotificationJob.name} & set(app.tasks))
+        assert app.conf.beat_schedule == {}
     finally:
         app.close()
+
+
+async def test_producer_factory_does_not_import_worker_handlers() -> None:
+    # Celery shares registered tasks across apps in one process. Check a clean import.
+    result = await run_process(
+        sys.executable,
+        "-c",
+        """
+import socket
+import sys
+
+def refuse_connection(*args, **kwargs):
+    raise AssertionError("Producer factory connected")
+
+socket.socket.connect = refuse_connection
+from taskbot.domain.jobs import NotificationJob, SweepJob, TranscriptionJob
+from taskbot.infrastructure.celery.app import create_celery_app
+
+app = create_celery_app(broker_url="redis://127.0.0.1:1/1", namespace="")
+try:
+    assert "taskbot.entrypoints.worker" not in sys.modules
+    assert not ({TranscriptionJob.name, NotificationJob.name, SweepJob.name} & set(app.tasks))
+    assert app.conf.beat_schedule == {}
+finally:
+    app.close()
+""",
+        cwd=BACKEND_ROOT,
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 async def test_queue_sends_json_on_its_thread_and_eagerly_resolves_pool() -> None:

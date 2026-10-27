@@ -10,17 +10,19 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from celery import Celery
 
 from taskbot.entrypoints.worker.launcher import beat_schedule_path
 from taskbot.infrastructure.celery.app import create_celery_app
+from tests.databases import is_test_database
 from tests.integration.settings import InfraTestSettings
 from tests.processes import ProcessResult, run_process
 
@@ -53,31 +55,47 @@ async def wait_records(
     )
 
 
-def worker_environment(namespace: str, log_dir: Path) -> dict[str, str]:
+def worker_environment(
+    namespace: str,
+    log_dir: Path,
+    *,
+    database_url: str = DATABASE_URL,
+    env: Mapping[str, str | None] | None = None,
+) -> dict[str, str]:
     if not namespace.startswith("taskbot_test_"):
         raise ValueError("Workers require an owned test namespace")
     log_dir.mkdir(parents=True, exist_ok=True)
     settings = InfraTestSettings()
-    env = dict(os.environ)
-    env.pop("TELEGRAM_BOT_TOKEN", None)
+    result = dict(os.environ)
+    for credential in ("TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        result.pop(credential, None)
     for key in (
         "TASKBOT_TEST_FAIL_CHILD_RUNTIME",
         "TASKBOT_TEST_REPLACEMENT_INIT_DELAY",
         "TASKBOT_TEST_ALIVE_TIMEOUT",
         "TASKBOT_WORKER_MAIN_PID",
     ):
-        env.pop(key, None)
-    env.update(
+        result.pop(key, None)
+    result.update(
         REDIS_URL=str(settings.redis_url),
         CELERY_BROKER_URL=settings.broker_url,
         REDIS_NAMESPACE=namespace,
         TASKBOT_ENV_FILE="/dev/null",
-        DATABASE_URL=DATABASE_URL,
+        DATABASE_URL=database_url,
+        TRANSCRIPTION_PROVIDER="fake",
+        TASK_EXTRACTOR="heuristic",
         TASKBOT_TEST_PARENT_PID=str(os.getpid()),
         PYTHONUNBUFFERED="1",
         TASKBOT_TEST_CHILD_STARTS=str(log_dir / ("child-" + uuid4().hex)),
     )
-    return env
+    for key, value in (env or {}).items():
+        if value is None:
+            result.pop(key, None)
+        else:
+            result[key] = value
+    if not is_test_database(urlsplit(result["DATABASE_URL"]).path.removeprefix("/")):
+        raise ValueError("Workers require an owned test database")
+    return result
 
 
 def process_groups() -> list[tuple[int, int]]:
@@ -288,8 +306,11 @@ async def running_worker(
     fail_runtime: bool = False,
     wait_ready: bool = True,
     developer_command: bool = False,
+    database_url: str = DATABASE_URL,
+    env: Mapping[str, str | None] | None = None,
+    include: Sequence[str] = ("tests.worker_tasks",),
 ) -> AsyncIterator[RunningWorker]:
-    env = worker_environment(namespace, log_dir)
+    env = worker_environment(namespace, log_dir, database_url=database_url, env=env)
     env["TASKBOT_TEST_TERMINAL_STATE"] = env["TASKBOT_TEST_CHILD_STARTS"] + "-terminal.json"
     env["TASKBOT_TEST_REPLACEMENT_INIT_DELAY"] = str(replacement_delay)
     if alive_timeout is not None:
@@ -313,8 +334,7 @@ async def running_worker(
             process = await asyncio.create_subprocess_exec(
                 *command,
                 role,
-                "--include",
-                "tests.worker_tasks",
+                *(["--include", ",".join(include)] if include else []),
                 cwd=BACKEND.parent if developer_command else BACKEND,
                 env=env,
                 start_new_session=True,

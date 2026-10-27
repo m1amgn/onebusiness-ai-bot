@@ -337,8 +337,9 @@ fakes instead of duplicating them; their unit-of-work guards enforce the boundar
 Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
 launcher. It execs Celery; notify also owns beat. Role selection reads the first
 argument or process WORKER_ROLE, never dotenv. BrokerSettings is connection-free;
-WorkerSettings requires role and DATABASE_URL, with no provider settings and an
-optional Telegram token. Startup validation prints variable names without input
+WorkerSettings requires role and DATABASE_URL with an optional Telegram token;
+TranscribeWorkerSettings adds the provider and extractor settings. Notify ignores
+these settings. Startup validation prints variable names without input
 values. On macOS the launcher adds FORKED_BY_MULTIPROCESSING=1; direct prefork
 without it is refused.
 
@@ -351,23 +352,42 @@ Startup logs mask broker passwords and omit the URL query and fragment.
 
 The main process records its actual PID and connects no clients. Each pool child
 owns one event loop and WorkerContainer. Register each resource in that owner as
-soon as it is built; a builder failure must leave partial resources reachable for
+soon as it is built; async build_container enters the extractor and transcription
+contexts on that loop. Notify builds neither. A builder failure leaves partial resources reachable for
 cleanup. start_child catches BaseException, closes resources independently,
 signals only its still-recorded actual parent, then always os._exit(70). Tasks use
 runtime.run_async; interrupted coroutines are cancelled and drained before reuse.
 Shutdown closes the job queue synchronously before Redis and the SQL engine.
 
+Transcription, notification and sweep tasks validate keyword payloads and call
+the corresponding application use cases. Transcription has a 400-second attempt
+budget, then Celery soft/hard limits of 420/450 seconds. Notification and sweep
+limits are 60/90 seconds. OpenAI has a 30-second adapter deadline; whisper-server
+has 300 seconds. The error taxonomy is in docs/plans/2026-10-27-s5-worker.md.
+Task errors log class names only: PostgreSQL server errors can contain source text
+even when bound parameters are hidden. Notify enqueues a sweep at startup and
+beat repeats it every 60 seconds, with a 60-second message expiry.
+
 Use tests/workers.py for real-worker tests. Every worker needs its own test child
-namespace, /dev/null dotenv, no Telegram token and a closed-port fake database URL.
-Test-only hooks/tasks stay in tests/worker_tasks.py, included explicitly. Worker
+namespace, /dev/null dotenv and no Telegram or inherited provider credentials.
+The default database URL has a closed port; S5 tests pass only an owned test
+database. The harness validates its name. Defaults explicitly select fake
+transcription and heuristic extraction. Test-only hooks/tasks stay in
+tests/worker_tasks.py and tests/worker_s5_hooks.py, included explicitly. The S5
+hooks record receipts, return the synthetic fixture and inject child crashes;
+database, Redis and queue clients remain real. Worker
 output goes to owned files. Teardown sends SIGTERM only to the main PID, allows
 warm shutdown, records leftover members before cleanup, and rejects any forced stop.
 It kills residual owned groups in a finalizer. Beat runs in a private temporary directory;
 verify its namespaced schedule in the nested per-user directory while it runs,
 then remove the harness's entire private temporary root after all children exit.
-Never run an unfinished worker against the
-unnamespaced shared development queues; without S5 handlers it discards real jobs.
+Never run test workers against unnamespaced shared development queues.
 S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification.
+
+The offline voice replay is tests/acceptance/replay_s5.py with
+TASKBOT_ENV_FILE=/dev/null. Its frozen V1-V12 expectations are s5_expected.json.
+It uses real use cases and the packet parser with synthetic service doubles;
+provider factories and socket connections are forbidden during replay.
 
 Celery 5.6 embedded Beat protects sys.__stdin__ when closing inherited descriptors,
 but Billiard first replaces sys.stdin. The worker-only compat fixup registers a
