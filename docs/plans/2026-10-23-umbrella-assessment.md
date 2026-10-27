@@ -661,7 +661,7 @@ Asked whether the stack is packaged for a server, the owner decided on 2026-10-2
 - What changes: S8's scope, acceptance and open questions in section 5, its row in section 10, section 1 and one assumption in section 8.
 - What stays: the stack runs on one machine with `docker compose up --build`, and nothing is deployed. A server, a domain and every deployment need the owner's word.
 - What "as close to production as possible" covers is S8's grill, not this document's: the umbrella fixes the decomposition, the stage's designer asks the owner about the inside of the stage.
-- S8's own departures, when it integrates, come in a later amendment.
+- S8's own departures from this text stay in S8's design, in its `Departures` section. The umbrella is amended only when the decomposition changes (the protocol's rule since the retro of 2026-10-27).
 
 ### Stage S11
 
@@ -671,7 +671,7 @@ The owner asked on 2026-10-27: «У тебя есть скил нарисова�
 
 **What the umbrella fixes for S11** (the reasons are the shared rules this document already states):
 
-- A diagram is authored from the code and verified, not drawn freehand: each component cites a file and line at a pinned revision, and the freshness check proves that the map matches the code.
+- A diagram is authored from the code and verified, not drawn freehand: each component cites a file and line at a pinned revision, checked against the source when the map is authored. The freshness check later detects changes to the cited files; it does not prove that the topology or uncited code still matches, so the source check and the visual review establish that a diagram is accurate.
 - Text is English and carries no names, local paths, keys or chat content, because the repository is public.
 - S11 changes no application code. It adds `docs/architecture/`, the PDFs and a README section.
 - S11 starts from the umbrella tip after S8's integration, as every stage does.
