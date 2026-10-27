@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 
@@ -154,6 +153,11 @@ async def test_five_real_child_crashes_exhaust_without_a_sixth_download(
         assert final.status == VoiceJobStatus.FAILED
         assert final.failure_kind == FailureKind.STUCK
         assert final.attempts == 5
+        assert final.notification_outcome == NotificationOutcome.EDITED
+        notices = await wait_records(receipts, "notification")
+        assert notices[0]["text"] == (
+            "Something went wrong while processing this voice message. Please send it again."
+        )
         assert len(read_records(receipts, "fetch")) == 5
         assert len({item["pid"] for item in read_records(receipts, "fetch")}) == 5
 
@@ -173,9 +177,12 @@ async def test_notify_runs_startup_sweep_and_real_beat_tick(
         database_url=database_url,
         env=env,
         include=HOOKS,
-    ):
+    ) as worker:
         rows = await wait_records(receipts, "sweep", count=2, timeout_seconds=80)
         assert all(row["state"] == "SUCCESS" for row in rows)
+        output = worker.log_path.read_text()
+        assert "Voice recovery job failed (" not in output
+        assert output.count("Voice recovery job completed") >= 2
 
 
 async def test_database_error_logs_no_transcript_and_leaves_processing_for_recovery(
@@ -210,11 +217,7 @@ async def test_database_error_logs_no_transcript_and_leaves_processing_for_recov
             env={"TASKBOT_TEST_S5_RECEIPTS": str(receipts)},
         ) as worker:
             await worker.send(TranscriptionJob.name, voice_job_id=row.id)
-            async with asyncio.timeout(30):
-                # Worker log files have no cross-process asyncio notification.
-                while "Transcription job failed (" not in worker.log_path.read_text():  # noqa: ASYNC110
-                    await asyncio.sleep(0.05)
-            output = worker.log_path.read_text()
+            output = await worker.wait_for_log("Transcription job failed (")
             assert "S5 synthetic secret" not in output
             assert "demo transcript" not in output
             assert "Please remind me" not in output

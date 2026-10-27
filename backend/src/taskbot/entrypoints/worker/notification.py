@@ -1,5 +1,6 @@
 import logging
 
+from taskbot.application.notify_user import Finished
 from taskbot.domain.jobs import NotificationJob, SweepJob
 from taskbot.entrypoints.worker import app, runtime
 
@@ -15,7 +16,12 @@ def notify_user(*args: object, **kwargs: object) -> None:
         use_case = runtime.current_container().notify
         if use_case is None:
             raise RuntimeError("Notification use case is unavailable")
-        runtime.run_async(use_case.execute(job))
+        result = runtime.run_async(use_case.execute(job))
+        logger.info(
+            "Notification job result=%s outcome=%s",
+            type(result).__name__,
+            result.outcome.value if isinstance(result, Finished) else "-",
+        )
     except Exception as error:
         logger.warning("Notification job failed (%s)", type(error).__name__)
 
@@ -30,5 +36,6 @@ def recover_stuck_voice_jobs(*args: object, **kwargs: object) -> None:
         if use_case is None:
             raise RuntimeError("Recovery use case is unavailable")
         runtime.run_async(use_case.execute())
+        logger.info("Voice recovery job completed")
     except Exception as error:
         logger.warning("Voice recovery job failed (%s)", type(error).__name__)

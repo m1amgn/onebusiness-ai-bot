@@ -5,8 +5,19 @@ from types import SimpleNamespace
 import pytest
 from billiard.exceptions import SoftTimeLimitExceeded
 
-from taskbot.application.transcribe_voice import AttemptProgress
+from taskbot.application.notify_user import Finished, NotifyResult
+from taskbot.application.transcribe_voice import (
+    AttemptProgress,
+    Done,
+    Dropped,
+    Failed,
+    Retrying,
+    Stale,
+    TranscribeResult,
+    Waiting,
+)
 from taskbot.domain.jobs import NotificationJob, SweepJob, TranscriptionJob
+from taskbot.domain.voice_jobs import FailureKind, NotificationOutcome
 from taskbot.entrypoints.worker import app, notification, runtime, transcription
 from taskbot.infrastructure.celery.app import create_celery_app
 
@@ -17,12 +28,14 @@ class TranscriptionUseCase:
         self.failure = failure
         self.calls: list[object] = []
         self.timeout_failure: Exception | None = None
+        self.result: TranscribeResult = Done(12, 34)
 
-    async def execute(self, job: TranscriptionJob, progress: AttemptProgress) -> None:
+    async def execute(self, job: TranscriptionJob, progress: AttemptProgress) -> TranscribeResult:
         self.calls.append(job)
         progress.attempt = self.attempt
         if self.failure is not None:
             raise self.failure
+        return self.result
 
     async def time_out(self, voice_job_id: int, attempt: int) -> None:
         self.calls.append((voice_job_id, attempt))
@@ -34,11 +47,13 @@ class NotificationUseCase:
     def __init__(self, failure: Exception | None = None) -> None:
         self.calls: list[NotificationJob] = []
         self.failure = failure
+        self.result: NotifyResult = Finished(NotificationOutcome.EDITED)
 
-    async def execute(self, job: NotificationJob) -> None:
+    async def execute(self, job: NotificationJob) -> NotifyResult:
         self.calls.append(job)
         if self.failure is not None:
             raise self.failure
+        return self.result
 
 
 class RecoveryUseCase:
@@ -95,6 +110,49 @@ def test_job_handlers_validate_and_dispatch(use_cases: SimpleNamespace) -> None:
     assert use_cases.transcribe.calls == [TranscriptionJob(voice_job_id=12)]
     assert use_cases.notify.calls == [NotificationJob(voice_job_id=12, status="done")]
     assert use_cases.recover.calls == 1
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        Done(12, 34),
+        Failed(12, FailureKind.INTERNAL),
+        Retrying(12, 2, 4),
+        Waiting(3),
+        Stale(),
+        Dropped(),
+    ],
+)
+def test_transcription_result_logs_safe_class_and_failure_kind(
+    result: TranscribeResult, use_cases: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    use_cases.transcribe.result = result
+    with caplog.at_level(logging.INFO):
+        transcription.transcribe_voice_job.run(voice_job_id=12)
+    assert f"result={type(result).__name__}" in caplog.text
+    if isinstance(result, Failed):
+        assert f"kind={result.kind.value}" in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+@pytest.mark.parametrize("outcome", list(NotificationOutcome))
+def test_notification_result_logs_safe_class_and_outcome(
+    outcome: NotificationOutcome, use_cases: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    use_cases.notify.result = Finished(outcome)
+    with caplog.at_level(logging.INFO):
+        notification.notify_user.run(voice_job_id=12, status="done")
+    assert "result=Finished" in caplog.text
+    assert f"outcome={outcome.value}" in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_successful_sweep_logs_completion(
+    use_cases: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO):
+        notification.recover_stuck_voice_jobs.run()
+    assert "Voice recovery job completed" in caplog.text
 
 
 @pytest.mark.parametrize("task_name", [TranscriptionJob.name, NotificationJob.name, SweepJob.name])

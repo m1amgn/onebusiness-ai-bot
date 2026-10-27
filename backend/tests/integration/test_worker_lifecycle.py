@@ -31,6 +31,7 @@ async def test_role_workers_route_and_report_startup(
                     "s3test.sleep", seconds=0.1, marker=f"{worker.role}-{number}", log=str(log)
                 )
         await wait_records(log, "end", count=4)
+        await notify.wait_for_log("Voice recovery job failed (")
         rows = read_records(log, "start")
         transcription_pids = {
             row["pid"] for row in rows if str(row["marker"]).startswith("transcribe")

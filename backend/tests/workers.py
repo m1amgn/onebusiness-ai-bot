@@ -208,6 +208,13 @@ class RunningWorker:
             await asyncio.sleep(0.1)
         raise AssertionError("Worker did not become ready: " + self.log_path.read_text())
 
+    async def wait_for_log(self, text: str, *, timeout_seconds: float = 30) -> str:
+        async with asyncio.timeout(timeout_seconds):
+            # Log files have no cross-process asyncio notification.
+            while text not in (output := self.log_path.read_text()):  # noqa: ASYNC110
+                await asyncio.sleep(0.05)
+            return output
+
     async def stop(self) -> None:
         if self.terminal_fd is not None:
             await self._stop_terminal()

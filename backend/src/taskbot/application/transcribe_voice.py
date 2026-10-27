@@ -93,6 +93,11 @@ class _Prepared:
     extraction: Extraction
 
 
+@dataclass(frozen=True, slots=True)
+class _RetryPreparation:
+    pass
+
+
 class TranscribeVoiceJob:
     def __init__(
         self,
@@ -129,7 +134,7 @@ class TranscribeVoiceJob:
         prepared = await self._prepare(row)
         if isinstance(prepared, FailureKind):
             return await self._fail(row.id, row.attempts, prepared)
-        if prepared is None:
+        if isinstance(prepared, _RetryPreparation):
             return await self._retry(row)
         return await self._complete(row, prepared)
 
@@ -147,13 +152,13 @@ class TranscribeVoiceJob:
                 await uow.commit()
             if row is None:
                 return Stale()
-            await self._enqueue(NotificationJob(voice_job_id=row.id, status="failed"))
+            await self._enqueue(NotificationJob.from_voice_job(row))
             return Failed(row.id, FailureKind.STUCK)
         if isinstance(claim, JobMissing):
             logger.info("Voice job missing: %s", job.voice_job_id)
         return Dropped()
 
-    async def _prepare(self, row: VoiceJob) -> _Prepared | FailureKind | None:
+    async def _prepare(self, row: VoiceJob) -> _Prepared | FailureKind | _RetryPreparation:
         budget = asyncio.timeout(ATTEMPT_BUDGET_SECONDS)
         try:
             async with budget:
@@ -161,7 +166,7 @@ class TranscribeVoiceJob:
         except self._interrupts:
             raise
         except TransientTranscriptionError, VoiceFileUnavailableError:
-            return None
+            return _RetryPreparation()
         except TranscriptionError as error:
             return error.kind
         except UnreadableAudioError:
@@ -176,11 +181,11 @@ class TranscribeVoiceJob:
                 return FailureKind.TRANSCRIPTION_TIMEOUT
             return FailureKind.INTERNAL
 
-    async def _read(self, row: VoiceJob) -> _Prepared | FailureKind:
+    async def _read(self, row: VoiceJob) -> _Prepared:
         audio = await self._files.fetch(row.file_id, max_bytes=MAX_VOICE_BYTES)
         maximum = MAX_VOICE_SECONDS + VOICE_DURATION_TOLERANCE_SECONDS
         if opus_duration_seconds(audio) > maximum:
-            return FailureKind.TOO_LONG
+            raise TranscriptionError(FailureKind.TOO_LONG)
         result = await self._transcriber.transcribe(audio)
         text, cut = MessageText.parse(result.text).bounded(TRANSCRIPT_MAX)
         if cut:
@@ -210,7 +215,7 @@ class TranscribeVoiceJob:
                 return Stale()
             events = await uow.commit()
         await publish_events(self._publisher, events)
-        await self._enqueue(NotificationJob(voice_job_id=row.id, status="done"))
+        await self._enqueue(NotificationJob.from_voice_job(completed))
         return Done(row.id, message_id)
 
     async def _fail(self, job_id: int, attempt: int, kind: FailureKind) -> TranscribeResult:
@@ -221,7 +226,7 @@ class TranscribeVoiceJob:
             await uow.commit()
         if row is None:
             return Stale()
-        await self._enqueue(NotificationJob(voice_job_id=job_id, status="failed"))
+        await self._enqueue(NotificationJob.from_voice_job(row))
         return Failed(job_id, kind)
 
     async def _retry(self, row: VoiceJob) -> TranscribeResult:

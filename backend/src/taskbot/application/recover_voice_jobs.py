@@ -4,7 +4,6 @@ from taskbot.domain.jobs import NotificationJob, TranscriptionJob
 from taskbot.domain.ports.messaging import JobQueue
 from taskbot.domain.ports.persistence import UnitOfWorkFactory
 from taskbot.domain.ports.services import Clock
-from taskbot.domain.voice_jobs import VoiceJobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +24,7 @@ class RecoverStuckVoiceJobs:
         jobs: list[TranscriptionJob | NotificationJob] = [
             TranscriptionJob(voice_job_id=job_id) for job_id in (*processing, *queued)
         ]
-        jobs.extend(
-            NotificationJob(
-                voice_job_id=row.id,
-                status="done" if row.status == VoiceJobStatus.DONE else "failed",
-            )
-            for row in unnotified
-        )
+        jobs.extend(NotificationJob.from_voice_job(row) for row in unnotified)
         for job in jobs:
             try:
                 await self._queue.enqueue(job)

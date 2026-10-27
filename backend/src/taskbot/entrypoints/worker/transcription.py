@@ -2,7 +2,7 @@ import logging
 
 from billiard.exceptions import SoftTimeLimitExceeded
 
-from taskbot.application.transcribe_voice import AttemptProgress, TranscribeVoiceJob
+from taskbot.application.transcribe_voice import AttemptProgress, Failed, TranscribeVoiceJob
 from taskbot.domain.jobs import TranscriptionJob
 from taskbot.entrypoints.worker import app, runtime
 
@@ -21,7 +21,12 @@ def transcribe_voice_job(*args: object, **kwargs: object) -> None:
         use_case = runtime.current_container().transcribe
         if use_case is None:
             raise RuntimeError("Transcription use case is unavailable")
-        runtime.run_async(use_case.execute(job, progress))
+        result = runtime.run_async(use_case.execute(job, progress))
+        logger.info(
+            "Transcription job result=%s kind=%s",
+            type(result).__name__,
+            result.kind.value if isinstance(result, Failed) else "-",
+        )
     except SoftTimeLimitExceeded:
         logger.warning("Transcription job interrupted (SoftTimeLimitExceeded)")
         if job is not None and use_case is not None and progress.attempt is not None:

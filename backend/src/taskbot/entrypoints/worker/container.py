@@ -2,7 +2,6 @@ import logging
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 
-from aiogram import Bot
 from billiard.exceptions import SoftTimeLimitExceeded
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -23,12 +22,10 @@ from taskbot.infrastructure.redis.events import RedisEventPublisher
 from taskbot.infrastructure.settings.worker import TranscribeWorkerSettings, WorkerSettings
 from taskbot.infrastructure.sqlalchemy.engine import create_engine_and_sessions
 from taskbot.infrastructure.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
 from taskbot.infrastructure.telegram.unconfigured import (
     UnconfiguredNotifier,
     UnconfiguredVoiceSource,
 )
-from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
 from taskbot.infrastructure.transcription.factory import open_transcriber
 
 logger = logging.getLogger(__name__)
@@ -92,6 +89,11 @@ async def build_container(container: WorkerContainer) -> None:
         if settings.worker_role == "transcribe":
             container.files = UnconfiguredVoiceSource()
     else:
+        from aiogram import Bot
+
+        from taskbot.infrastructure.telegram.notifier import AiogramUserNotifier
+        from taskbot.infrastructure.telegram.voice_files import AiogramVoiceFileSource
+
         bot = Bot(settings.telegram_bot_token.get_secret_value())
         container.stack.push_async_callback(bot.session.close)
         container.notifier = AiogramUserNotifier(bot)

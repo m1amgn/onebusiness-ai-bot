@@ -146,7 +146,7 @@ class NotifyUser:
         if stored is None or stored.notify_not_before is None:
             return Dropped()
         delay = max(0, math.ceil((stored.notify_not_before - self._clock.now()).total_seconds()))
-        await self._enqueue(self._job(row), delay)
+        await self._enqueue(NotificationJob.from_voice_job(row), delay)
         return Deferred(delay)
 
     async def _retry(self, row: VoiceJob, error: Exception) -> NotifyResult:
@@ -154,14 +154,8 @@ class NotifyUser:
         if row.notify_attempts >= MAX_NOTIFY_ATTEMPTS:
             return await self._finish(row.id, NotificationOutcome.GIVEN_UP)
         delay = retry_delay_seconds(row.notify_attempts)
-        await self._enqueue(self._job(row), delay)
+        await self._enqueue(NotificationJob.from_voice_job(row), delay)
         return Retrying(delay)
-
-    @staticmethod
-    def _job(row: VoiceJob) -> NotificationJob:
-        return NotificationJob(
-            voice_job_id=row.id, status="done" if row.status == VoiceJobStatus.DONE else "failed"
-        )
 
     async def _enqueue(self, job: NotificationJob, delay: int) -> None:
         try:

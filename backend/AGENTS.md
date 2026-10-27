@@ -333,6 +333,8 @@ stored row controls the result text. RecoverStuckVoiceJobs commits all sweep
 stamps before enqueueing. Database failures escape transcription mapping; queue
 failures are logged safely and recovered by sweep. Extend existing service
 fakes instead of duplicating them; their unit-of-work guards enforce the boundary.
+NotificationJob.from_voice_job is the canonical terminal-state mapping for full
+jobs and the sweep's UnnotifiedJob projection. Nonterminal inputs are refused.
 
 Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
 launcher. It execs Celery; notify also owns beat. Role selection reads the first
@@ -358,6 +360,8 @@ cleanup. start_child catches BaseException, closes resources independently,
 signals only its still-recorded actual parent, then always os._exit(70). Tasks use
 runtime.run_async; interrupted coroutines are cancelled and drained before reuse.
 Shutdown closes the job queue synchronously before Redis and the SQL engine.
+Keep aiogram imports inside token validation and configured Telegram composition;
+workers without a token must not pay that SDK import cost in either launcher pass.
 
 Transcription, notification and sweep tasks validate keyword payloads and call
 the corresponding application use cases. Transcription has a 400-second attempt
@@ -367,6 +371,8 @@ has 300 seconds. The error taxonomy is in docs/plans/2026-10-27-s5-worker.md.
 Task errors log class names only: PostgreSQL server errors can contain source text
 even when bound parameters are hidden. Notify enqueues a sweep at startup and
 beat repeats it every 60 seconds, with a 60-second message expiry.
+Successful task bodies log result class and failure-kind/notification-outcome
+codes at INFO, never result representations or source text.
 
 Use tests/workers.py for real-worker tests. Every worker needs its own test child
 namespace, /dev/null dotenv and no Telegram or inherited provider credentials.

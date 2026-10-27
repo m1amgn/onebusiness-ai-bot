@@ -1,5 +1,7 @@
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,10 +18,12 @@ from taskbot.entrypoints.worker.container import WorkerContainer, build_containe
 from taskbot.infrastructure.extraction.heuristic import HeuristicExtractor
 from taskbot.infrastructure.settings.worker import TranscribeWorkerSettings, WorkerSettings
 from taskbot.infrastructure.transcription.fake import FakeTranscriber
+from tests.processes import COLD_START_TIMEOUT_SECONDS, run_process
 
 DATABASE_URL = PostgresDsn(
     "postgresql+asyncpg://taskbot:taskbot@127.0.0.1:1/taskbot_test_0_00000000"
 )
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +101,40 @@ async def test_no_token_adapters_raise_domain_errors_without_connecting() -> Non
         await container.aclose()
 
 
+async def test_keyless_workers_do_not_import_the_telegram_sdk() -> None:
+    result = await run_process(
+        sys.executable,
+        "-c",
+        """
+import asyncio
+import sys
+from taskbot.entrypoints.worker.container import WorkerContainer, build_container
+from taskbot.infrastructure.settings.worker import TranscribeWorkerSettings, WorkerSettings
+
+async def check():
+    for role, model in (("notify", WorkerSettings), ("transcribe", TranscribeWorkerSettings)):
+        settings = model(
+            worker_role=role,
+            database_url="postgresql+asyncpg://test:test@127.0.0.1:1/taskbot_test_unused",
+            **({"transcription_provider": "fake", "task_extractor": "heuristic"}
+               if role == "transcribe" else {}),
+            _env_file=None,
+        )
+        container = WorkerContainer(settings)
+        try:
+            await build_container(container)
+            assert "aiogram" not in sys.modules, "keyless worker imported Telegram SDK"
+        finally:
+            await container.aclose()
+
+asyncio.run(check())
+""",
+        cwd=BACKEND_ROOT,
+        timeout_seconds=COLD_START_TIMEOUT_SECONDS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 async def test_factory_lifetimes_and_interrupt_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -156,7 +194,7 @@ async def test_partial_build_registers_and_closes_clients_immediately(
         raise RuntimeError("private constructor data")
         yield FakeTranscriber()
 
-    monkeypatch.setattr(container_module, "Bot", lambda token: SimpleNamespace(session=Session()))
+    monkeypatch.setattr("aiogram.Bot", lambda token: SimpleNamespace(session=Session()))
     monkeypatch.setattr(container_module, "open_extractor", extractor)
     monkeypatch.setattr(container_module, "open_transcriber", transcriber)
     settings = transcribe_settings().model_copy(
