@@ -42,7 +42,14 @@ class FakeUserNotifier:
 @dataclass
 class FakeVoiceFileSource:
     data: bytes = b"synthetic audio"
+    calls: Calls = field(default_factory=Calls)
+    failures: dict[int, BaseException] = field(default_factory=dict)
+    requests: list[tuple[str, int]] = field(default_factory=list)
 
     async def fetch(self, file_id: str, *, max_bytes: int) -> bytes:
         assert not inside_unit_of_work.get(), "Download inside a unit of work"
+        self.calls.items.append("files.fetch")
+        self.requests.append((file_id, max_bytes))
+        if len(self.requests) in self.failures:
+            raise self.failures[len(self.requests)]
         return self.data

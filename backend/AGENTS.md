@@ -326,6 +326,14 @@ and propagate cancellation/soft interruption. Whisper non-speech markers alone
 are empty; ordinary fluent hallucinations are not filtered. Provider clients and
 loggers must never expose transcript text.
 
+TranscribeVoiceJob composes claim, slow preparation and guarded atomic completion
+as separate steps. Pass AttemptProgress for the synchronous soft-limit backstop.
+NotifyUser reads terminal state and text inputs before its Telegram call; the
+stored row controls the result text. RecoverStuckVoiceJobs commits all sweep
+stamps before enqueueing. Database failures escape transcription mapping; queue
+failures are logged safely and recovered by sweep. Extend existing service
+fakes instead of duplicating them; their unit-of-work guards enforce the boundary.
+
 Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
 launcher. It execs Celery; notify also owns beat. Role selection reads the first
 argument or process WORKER_ROLE, never dotenv. BrokerSettings is connection-free;
