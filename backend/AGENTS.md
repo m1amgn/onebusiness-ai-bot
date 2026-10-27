@@ -318,6 +318,14 @@ Ogg streams before a provider call. MessageText.bounded caps stored transcripts 
 Migration 0004 permits too_long; migrate before using that failure kind. Downgrade
 rewrites too_long to too_large. The shared SQL engine hides bound parameters.
 
+Open transcription clients through infrastructure/transcription/factory.py's
+open_transcriber. The factory owns and closes the selected client; fake and
+keyless OpenAI branches do not import the SDK. Adapters classify final versus
+transient errors, own their wall-clock deadlines, disable retries and redirects,
+and propagate cancellation/soft interruption. Whisper non-speech markers alone
+are empty; ordinary fluent hallucinations are not filtered. Provider clients and
+loggers must never expose transcript text.
+
 Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
 launcher. It execs Celery; notify also owns beat. Role selection reads the first
 argument or process WORKER_ROLE, never dotenv. BrokerSettings is connection-free;
