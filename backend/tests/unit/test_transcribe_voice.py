@@ -130,10 +130,12 @@ async def test_final_failure_mapping_logs_no_input(
 
 
 @pytest.mark.parametrize("attempt", [1, 2, 3, 4, 5])
-async def test_transient_attempts_and_retry_edit_order(attempt: int) -> None:
+@pytest.mark.parametrize("ack", [None, 99])
+async def test_transient_attempts_and_retry_edit_order(attempt: int, ack: int | None) -> None:
     use_case, store, _, queue, notifier = await fixture(
         failure=TransientTranscriptionError(), attempts=attempt - 1
     )
+    store.state.voice_jobs[1] = replace(store.state.voice_jobs[1], ack_message_id=ack)
     result = await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
     row = store.state.voice_jobs[1]
     if attempt == 5:
@@ -144,8 +146,10 @@ async def test_transient_attempts_and_retry_edit_order(attempt: int) -> None:
         assert isinstance(result, Retrying)
         assert row.status == VoiceJobStatus.QUEUED
         assert queue.jobs == [(TranscriptionJob(voice_job_id=1), 2**attempt)]
-    assert notifier.edits == ([(7, 99, RETRYING)] if attempt == 1 else [])
-    if attempt == 1:
+    expected_edits = [(7, 99, RETRYING)] if attempt == 1 and ack is not None else []
+    assert notifier.edits == expected_edits
+    assert notifier.count == len(expected_edits)
+    if expected_edits:
         assert store.calls.items.index("notifier.edit_message") < store.calls.items.index(
             "voice_jobs.requeue"
         )
@@ -162,6 +166,8 @@ async def test_download_unavailable_is_transient_and_retry_edit_errors_are_safe(
     result = await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
     assert isinstance(result, Retrying)
     assert queue.jobs[0][1] == 2
+    assert notifier.count == (1 if ack is not None else 0)
+    assert not notifier.edits
     assert "private" not in caplog.text
 
 
@@ -188,10 +194,16 @@ async def test_unreadable_audio_and_blank_transcript_are_final() -> None:
 
 async def test_transcript_is_bounded_before_extraction(caplog: pytest.LogCaptureFixture) -> None:
     transcript = "private words " * 400
-    use_case, store, _, _, _ = await fixture(transcript=transcript)
+    use_case, store, _, queue, _ = await fixture(transcript=transcript)
     with caplog.at_level("INFO"):
-        await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
+        result = await use_case.execute(TranscriptionJob(voice_job_id=1), AttemptProgress())
+    assert isinstance(result, Done)
     assert store.state.messages[1].text == transcript[:4096].rsplit(" ", 1)[0]
+    assert len(store.state.tasks) == 1
+    assert store.state.tasks[1].inbound_message_id == 1
+    assert store.state.tasks[1].title == "Call home"
+    assert store.state.voice_jobs[1].status == VoiceJobStatus.DONE
+    assert queue.jobs == [(NotificationJob(voice_job_id=1, status="done"), 0)]
     assert "truncat" in caplog.text.lower()
     assert "private words" not in caplog.text
 

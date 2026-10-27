@@ -11,7 +11,7 @@ from taskbot.application.notify_user import (
     NotifyUser,
     Retrying,
 )
-from taskbot.application.replies import DEGRADED_LINE, VOICE_UNAVAILABLE
+from taskbot.application.replies import DEGRADED_LINE, VOICE_FAILURE_TEXT, VOICE_UNAVAILABLE
 from taskbot.domain.errors import (
     MessageGoneError,
     NotificationError,
@@ -197,6 +197,64 @@ async def test_failed_row_wins_payload_status(caplog: pytest.LogCaptureFixture) 
         await use_case.execute(NotificationJob(voice_job_id=1, status="done"))
     assert notifier.edits[0][2] == VOICE_UNAVAILABLE
     assert "mismatch" in caplog.text.lower()
+
+
+@pytest.mark.parametrize(
+    ("kind", "text"),
+    [
+        (
+            FailureKind.TOO_LARGE,
+            "This voice message is larger than 10 MB. Please send a shorter one.",
+        ),
+        (
+            FailureKind.TOO_LONG,
+            "This voice message is longer than 2 minutes. Please send a shorter one.",
+        ),
+        (
+            FailureKind.UNSUPPORTED_AUDIO,
+            "I could not read this audio. Please send the voice message again.",
+        ),
+        (
+            FailureKind.EMPTY_TRANSCRIPT,
+            "I could not hear any words in this voice message. "
+            "Please speak closer to the microphone or type your task.",
+        ),
+        (
+            FailureKind.TRANSCRIPTION_TIMEOUT,
+            "This recording took too long to process. Please send a shorter voice message.",
+        ),
+        (
+            FailureKind.PROVIDER_UNAVAILABLE,
+            "Transcription is unavailable right now. "
+            "Your message was not lost: please type it as text.",
+        ),
+        (
+            FailureKind.TRANSIENT_EXHAUSTED,
+            "I could not transcribe this voice message after several attempts. "
+            "Please send it again later.",
+        ),
+        (
+            FailureKind.INTERNAL,
+            "Something went wrong while processing this voice message. Please send it again.",
+        ),
+        (
+            FailureKind.STUCK,
+            "Something went wrong while processing this voice message. Please send it again.",
+        ),
+    ],
+)
+async def test_failure_notifications_use_design_text(kind: FailureKind, text: str) -> None:
+    use_case, store, _, _, notifier = await fixture(failed=True)
+    store.state.voice_jobs[1] = replace(store.state.voice_jobs[1], failure_kind=kind)
+
+    assert await use_case.execute(NotificationJob(voice_job_id=1, status="failed")) == Finished(
+        NotificationOutcome.EDITED
+    )
+    assert notifier.edits == [(7, 99, text)]
+
+
+def test_failure_text_mapping_covers_every_failure_kind() -> None:
+    assert set(VOICE_FAILURE_TEXT) == set(FailureKind)
 
 
 async def test_missing_and_nonterminal_rows_drop_without_send() -> None:

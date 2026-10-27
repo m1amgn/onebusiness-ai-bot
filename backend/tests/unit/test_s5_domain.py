@@ -76,6 +76,65 @@ def test_unreadable_audio_is_rejected(data: bytes) -> None:
         opus_duration_seconds(data)
 
 
+@pytest.mark.parametrize(
+    ("data", "reason"),
+    [
+        (
+            ogg_page([b"NotAHead" + bytes(11)], 0, flags=2)
+            + ogg_page([b"OpusTags" + bytes(8)], 1)
+            + ogg_page([b"\xf8\xff\xfe"], 2, flags=4),
+            "Missing Opus header",
+        ),
+        (
+            synthetic_opus(0) + ogg_page([b"OpusHead" + bytes(11)], 2, flags=4),
+            "Repeated Opus header",
+        ),
+        (
+            ogg_page([b"OpusHead" + bytes([1, 1]) + bytes(9)], 0, flags=2)
+            + ogg_page([b"OpusTags" + bytes(8)], 1, flags=4),
+            "Missing Opus audio",
+        ),
+        (
+            ogg_page([b"OpusHead" + bytes([1, 1]) + bytes(9)], 0, flags=2)
+            + ogg_page([b"\xf8\xff\xfe"], 1, flags=4),
+            "Missing Opus tags",
+        ),
+        (
+            synthetic_opus(0)
+            + ogg_page([b"\xf8\xff\xfe"], 2, flags=4)[:14]
+            + (2).to_bytes(4, "little")
+            + ogg_page([b"\xf8\xff\xfe"], 2, flags=4)[18:],
+            "Multiple Ogg streams",
+        ),
+        (
+            synthetic_opus(0) + ogg_page([b"\xf8\xff\xfe"], 3, flags=4),
+            "Missing Ogg page",
+        ),
+        (
+            synthetic_opus(0) + ogg_page([b"\xf8\xff\xfe"], 2, flags=5),
+            "Invalid Ogg continuation",
+        ),
+    ],
+    ids=[
+        "no-opus-head",
+        "repeated-opus-head",
+        "no-audio",
+        "no-tags",
+        "second-serial",
+        "sequence-gap",
+        "bad-continuation",
+    ],
+)
+def test_malformed_ogg_streams_are_rejected_for_their_specific_fault(
+    data: bytes, reason: str
+) -> None:
+    from taskbot.domain.audio import opus_duration_seconds
+    from taskbot.domain.errors import UnreadableAudioError
+
+    with pytest.raises(UnreadableAudioError, match=f"^{reason}$"):
+        opus_duration_seconds(data)
+
+
 def test_bounded_transcript_keeps_last_complete_word() -> None:
     original = MessageText.parse("call supplier " * 400)
     text, cut = original.bounded(4096)

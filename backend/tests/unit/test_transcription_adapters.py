@@ -261,6 +261,16 @@ async def test_whisper_final_status_mapping(
     assert "PRIVATE_" not in caplog.text
 
 
+async def test_whisper_real_missing_file_response_is_internal() -> None:
+    from taskbot.infrastructure.transcription.whisper_server import WhisperServerTranscriber
+
+    response = httpx.Response(400, json={"error": "no 'file' field in the request"})
+    async with whisper_client(lambda request: response) as client:
+        with pytest.raises(TranscriptionError) as raised:
+            await WhisperServerTranscriber(client).transcribe(b"voice")
+    assert raised.value.kind == FailureKind.INTERNAL
+
+
 @pytest.mark.parametrize(
     ("status", "body"),
     [(499, "cancelled"), (500, "failed to process audio"), (503, "not ready"), (599, "unknown")],

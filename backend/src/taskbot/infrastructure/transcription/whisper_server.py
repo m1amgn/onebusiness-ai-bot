@@ -13,7 +13,13 @@ from taskbot.infrastructure.transcription.text import transcript_from_text
 
 WHISPER_TIMEOUT_SECONDS = 300.0
 _NON_SPEECH_SPANS = re.compile(r"\[[^\]]*\]|\([^)]*\)")
-_MISSING_FILE_REASONS = ("file not found", "file is required", "missing file", "file required")
+_MISSING_FILE_REASONS = (
+    "file not found",
+    "file is required",
+    "missing file",
+    "file required",
+    "no 'file' field in the request",
+)
 _TRANSIENT_ERRORS = (
     httpx.ConnectTimeout,
     httpx.PoolTimeout,
