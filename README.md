@@ -84,7 +84,7 @@ title. A missing acknowledgement gets a new reply to the voice message.
 ```text
 text  -> extract -> commit task -> reply -> publish event
 voice -> commit job -> reply -> store reply id -> enqueue -> stamp
-worker -> download -> inspect -> transcribe -> extract -> commit -> notify
+worker -> download -> transcribe -> extract -> commit -> notify
 ```
 
 Tasks come only from private chats. Commands in groups receive a private-chat
