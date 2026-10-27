@@ -17,6 +17,7 @@ class VoiceJobStatus(StrEnum):
 
 class FailureKind(StrEnum):
     TOO_LARGE = "too_large"
+    TOO_LONG = "too_long"
     UNSUPPORTED_AUDIO = "unsupported_audio"
     EMPTY_TRANSCRIPT = "empty_transcript"
     TRANSCRIPTION_TIMEOUT = "transcription_timeout"

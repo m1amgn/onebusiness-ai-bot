@@ -14,6 +14,7 @@ def create_engine_and_sessions(
         pool_size=pool_size,
         max_overflow=0,
         pool_pre_ping=True,
+        hide_parameters=True,
         isolation_level="READ COMMITTED",
     )
     return engine, async_sessionmaker(engine, expire_on_commit=False)

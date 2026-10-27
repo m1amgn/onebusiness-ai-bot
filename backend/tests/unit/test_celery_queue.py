@@ -9,7 +9,7 @@ from celery import Celery
 from kombu.exceptions import OperationalError
 
 from taskbot.domain.errors import EnqueueError
-from taskbot.domain.jobs import NotificationJob, TranscriptionJob
+from taskbot.domain.jobs import NotificationJob, SweepJob, TranscriptionJob
 from taskbot.domain.ports.messaging import JobQueue
 from taskbot.infrastructure.celery.app import create_celery_app
 from taskbot.infrastructure.celery.job_queue import CeleryJobQueue
@@ -37,6 +37,7 @@ def test_factory_has_exact_shared_configuration_without_connecting(
             "task_routes": {
                 TranscriptionJob.name: {"queue": TranscriptionJob.queue},
                 NotificationJob.name: {"queue": NotificationJob.queue},
+                SweepJob.name: {"queue": SweepJob.queue},
             },
             "worker_hijack_root_logger": False,
             "worker_proc_alive_timeout": 30,

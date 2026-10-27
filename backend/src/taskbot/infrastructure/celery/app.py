@@ -1,6 +1,6 @@
 from celery import Celery
 
-from taskbot.domain.jobs import NotificationJob, TranscriptionJob
+from taskbot.domain.jobs import NotificationJob, SweepJob, TranscriptionJob
 
 
 def create_celery_app(*, broker_url: str, namespace: str) -> Celery:
@@ -20,7 +20,9 @@ def create_celery_app(*, broker_url: str, namespace: str) -> Celery:
         task_ignore_result=True,
         task_serializer="json",
         accept_content=["json"],
-        task_routes={job.name: {"queue": job.queue} for job in (TranscriptionJob, NotificationJob)},
+        task_routes={
+            job.name: {"queue": job.queue} for job in (TranscriptionJob, NotificationJob, SweepJob)
+        },
         worker_hijack_root_logger=False,
         worker_proc_alive_timeout=30,
         broker_connection_retry_on_startup=True,

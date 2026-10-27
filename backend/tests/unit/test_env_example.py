@@ -8,7 +8,11 @@ from taskbot.infrastructure.settings.api import ApiSettings
 from taskbot.infrastructure.settings.bot import BotSettings
 from taskbot.infrastructure.settings.migration import MigrationSettings
 from taskbot.infrastructure.settings.seed import SeedSettings
-from taskbot.infrastructure.settings.worker import BrokerSettings, WorkerSettings
+from taskbot.infrastructure.settings.worker import (
+    BrokerSettings,
+    TranscribeWorkerSettings,
+    WorkerSettings,
+)
 from tests.integration.settings import InfraTestSettings
 from tests.settings import SampleSettings
 
@@ -26,6 +30,7 @@ def test_example_environment_validates_and_contains_no_credentials(
         SeedSettings,
         BrokerSettings,
         WorkerSettings,
+        TranscribeWorkerSettings,
         BotSettings,
     )
     for settings_type in settings_types:
@@ -39,6 +44,7 @@ def test_example_environment_validates_and_contains_no_credentials(
                 "LOG_LEVEL",
                 "WEB_BASE_URL",
                 "TRANSCRIPTION_PROVIDER",
+                "OPENAI_TRANSCRIPTION_MODEL",
             }:
                 assert values[key] == str(field.default), f"{key} differs from the settings default"
     for key in values:

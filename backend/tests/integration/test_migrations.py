@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import asyncpg
+import pytest
 from alembic import command
 
 from tests.databases import make_alembic_config, raw_url
@@ -29,7 +30,7 @@ EXPECTED_CHECKS = {
     "ck_voice_jobs_done_has_message": "CHECKstatus<>'done'ORinbound_message_idISNOTNULL",
     "ck_voice_jobs_failed_has_kind": "CHECKstatus<>'failed'ORfailure_kindISNOTNULL",
     "ck_voice_jobs_failure_kind": (
-        "CHECKfailure_kind=ANYARRAY['too_large','unsupported_audio','empty_transcript',"
+        "CHECKfailure_kind=ANYARRAY['too_long','too_large','unsupported_audio','empty_transcript',"
         "'transcription_timeout','provider_unavailable','transient_exhausted','internal','stuck'][]"
     ),
     "ck_voice_jobs_notification_outcome": (
@@ -152,7 +153,7 @@ async def test_two_migrators_serialize_on_an_empty_database() -> None:
             group.create_task(upgrade())
         connection = await asyncpg.connect(raw_url(url))
         try:
-            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003"
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004"
             assert (
                 await connection.fetchval(
                     "SELECT count(*) FROM pg_tables WHERE schemaname='public'"
@@ -180,7 +181,7 @@ async def test_description_limit_downgrade_restores_2000_then_upgrade_restores_4
             """)
             assert normalize_sql(definition) == "CHECKchar_lengthdescription<=2000"
             await asyncio.to_thread(command.upgrade, config, "head")
-            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003"
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004"
             definition = await connection.fetchval("""
                 SELECT pg_get_constraintdef(oid) FROM pg_constraint
                 WHERE conname='ck_tasks_description_length'
@@ -208,7 +209,7 @@ async def test_message_text_erasure_migration_preserves_deduplication_on_downgra
                 == "NO"
             )
             await asyncio.to_thread(command.upgrade, config, "head")
-            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003"
+            assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004"
             assert (
                 await connection.fetchval("""
                 SELECT is_nullable FROM information_schema.columns
@@ -252,3 +253,30 @@ async def test_message_text_erasure_migration_preserves_deduplication_on_downgra
         finally:
             await connection.close()
     assert await development_schema() == before
+
+
+async def test_overlong_voice_downgrade_preserves_job_with_older_failure_kind() -> None:
+    async with database_context() as url:
+        config = make_alembic_config(url)
+        await asyncio.to_thread(command.upgrade, config, "head")
+        connection = await asyncpg.connect(raw_url(url))
+        try:
+            await connection.execute("""
+                INSERT INTO users (telegram_user_id, display_name, created_at, updated_at)
+                VALUES (7, 'Synthetic user', now(), now());
+                INSERT INTO voice_jobs (
+                    user_id, telegram_chat_id, telegram_message_id, file_id, file_unique_id,
+                    duration_seconds, status, attempts, last_enqueued_at, failure_kind,
+                    notify_attempts, created_at, updated_at
+                ) VALUES (1, 7, 1, 'synthetic', 'synthetic', 100, 'failed', 1, now(),
+                          'too_long', 0, now(), now());
+            """)
+            await asyncio.to_thread(command.downgrade, config, "0003")
+            assert await connection.fetchval("SELECT failure_kind FROM voice_jobs") == "too_large"
+            with pytest.raises(asyncpg.CheckViolationError):
+                await connection.execute("UPDATE voice_jobs SET failure_kind='too_long'")
+            await asyncio.to_thread(command.upgrade, config, "head")
+            await connection.execute("UPDATE voice_jobs SET failure_kind='too_long'")
+            await asyncio.to_thread(command.check, config)
+        finally:
+            await connection.close()

@@ -309,6 +309,15 @@ record the result in the README.
 
 ## Worker runtime
 
+TranscribeWorkerSettings declares provider and extractor settings separately from
+notify-role WorkerSettings. Both reuse the bot's Telegram token shape validator.
+Transcriber.transcribe takes audio bytes; each adapter owns its timeout. The
+domain audio inspector sums Opus packet durations and refuses malformed or chained
+Ogg streams before a provider call. MessageText.bounded caps stored transcripts at
+4096 characters. Worker notification copy lives in application/replies.py.
+Migration 0004 permits too_long; migrate before using that failure kind. Downgrade
+rewrites too_long to too_large. The shared SQL engine hides bound parameters.
+
 Root yarn dev:worker transcribe / notify runs entrypoints/worker through the role
 launcher. It execs Celery; notify also owns beat. Role selection reads the first
 argument or process WORKER_ROLE, never dotenv. BrokerSettings is connection-free;

@@ -46,6 +46,14 @@ class TranscriptionError(DomainError):
         super().__init__(kind.value)
 
 
+class TransientTranscriptionError(DomainError):
+    """A provider failed in a way another attempt can resolve."""
+
+
+class UnreadableAudioError(DomainError):
+    """Audio framing cannot be read safely."""
+
+
 class VoiceFileTooLargeError(DomainError):
     pass
 

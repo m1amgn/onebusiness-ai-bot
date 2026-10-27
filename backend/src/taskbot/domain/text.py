@@ -21,6 +21,15 @@ def clean_inline(raw: str) -> str:
 class MessageText:
     value: str
 
+    def bounded(self, limit: int) -> tuple[MessageText, bool]:
+        if limit < 1:
+            raise ValueError("Text limit must be positive")
+        if len(self.value) <= limit:
+            return self, False
+        prefix = self.value[:limit]
+        boundary = max((index for index, char in enumerate(prefix) if char.isspace()), default=-1)
+        return self.parse(prefix[:boundary] if boundary > 0 else prefix), True
+
     @classmethod
     def parse(cls, raw: str) -> MessageText:
         cleaned = clean_text(raw)
