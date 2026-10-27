@@ -426,6 +426,13 @@ to the result on the first transcription and notification attempts. The stand
 used heuristic extraction with a private test database and Redis namespace;
 both were removed after verification.
 
+An additional owner-authorized run used `TRANSCRIPTION_PROVIDER=openai` and
+`gpt-transcribe` with a new voice recorded in the Telegram app. The real worker
+returned non-empty text, stored one task and edited the acknowledgement on the
+first transcription and notification attempts. This run made one OpenAI call.
+It used heuristic extraction and a private database/Redis namespace, then removed
+the stand and its owned resources.
+
 ## Backend image
 
 The smoke image contains the installed Python package and runtime dependencies,
