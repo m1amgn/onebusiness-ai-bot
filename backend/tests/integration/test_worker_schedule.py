@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from taskbot.infrastructure.redis.client import create_redis_client
+from tests.processes import COLD_START_TIMEOUT_SECONDS
 from tests.redis_sessions import RedisSession, open_redis_session
 from tests.workers import read_records, running_worker, wait_records
 
@@ -24,13 +25,20 @@ async def test_countdown_and_reserved_eta_survive_restart(
     async with running_worker("transcribe", namespace, log_dir=tmp_path) as worker:
         sent = time.time()
         await worker.send("s3test.sleep", seconds=0.1, marker="eta3", log=str(log), countdown=3)
-        rows = await wait_records(log, "start", timeout_seconds=8)
+        rows = await wait_records(log, "start", timeout_seconds=COLD_START_TIMEOUT_SECONDS)
         assert float(str(rows[0]["time"])) >= sent + 3
         sent = time.time()
         await worker.send("s3test.sleep", seconds=0.1, marker="eta12", log=str(log), countdown=12)
-        await asyncio.sleep(2)
+        async with asyncio.timeout(COLD_START_TIMEOUT_SECONDS):
+            while True:
+                scheduled = await asyncio.to_thread(
+                    worker.app.control.inspect(destination=[worker.node], timeout=1).scheduled
+                )
+                if scheduled and scheduled.get(worker.node):
+                    break
+                await asyncio.sleep(0.05)
         os.kill(worker.pid, signal.SIGTERM)
-        await asyncio.wait_for(worker.process.wait(), 15)
+        await asyncio.wait_for(worker.process.wait(), COLD_START_TIMEOUT_SECONDS)
     async with create_redis_client(redis_session.broker_url) as broker:
         messages = await cast(
             Awaitable[list[str]], broker.lrange(namespace + "transcription", 0, -1)
@@ -38,7 +46,7 @@ async def test_countdown_and_reserved_eta_survive_restart(
         assert len(messages) == 1
         assert json.loads(messages[0])["headers"]["eta"]
     async with running_worker("transcribe", namespace, log_dir=tmp_path):
-        await wait_records(log, "end", count=2, timeout_seconds=18)
+        await wait_records(log, "end", count=2, timeout_seconds=COLD_START_TIMEOUT_SECONDS)
         rows = [row for row in read_records(log, "start") if row["marker"] == "eta12"]
         assert len(rows) == 1
         assert float(str(rows[0]["time"])) >= sent + 12

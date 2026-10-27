@@ -57,7 +57,7 @@ test('the dev proxy closes an interrupted upstream event stream', async () => {
         () => 'closed',
       ),
       new Promise((resolve) => {
-        deadline = setTimeout(() => resolve('still open'), 1000);
+        deadline = setTimeout(() => resolve('still open'), 10000);
       }),
     ]);
     assert.equal(outcome, 'closed', 'the browser must receive EOF or an error after upstream loss');

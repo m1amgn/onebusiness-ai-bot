@@ -35,7 +35,7 @@ async def test_stable_loop_publishes_and_drains_soft_limit(
             "type": "auth.revoked"
         }
         await worker.send("s3test.soft_limit", log=str(log))
-        await wait_records(log, "soft_limit", timeout_seconds=8)
+        await wait_records(log, "soft_limit", timeout_seconds=COLD_START_TIMEOUT_SECONDS)
         assert len(read_records(log, "cancelled")) == 1
         await worker.send("s3test.loop_identity", log=str(log))
         rows = await wait_records(log, "loop", count=3)
@@ -70,6 +70,6 @@ async def test_failed_runtime_runs_no_task_restores_message_and_allows_healthy_r
     async with create_redis_client(redis_session.broker_url) as broker:
         assert await cast(Awaitable[int], broker.llen(namespace + "transcription")) == 1
     async with running_worker("transcribe", namespace, log_dir=tmp_path) as healthy:
-        await wait_records(log, "end", timeout_seconds=12)
+        await wait_records(log, "end", timeout_seconds=COLD_START_TIMEOUT_SECONDS)
         assert len(read_records(log, "start")) == 1
         assert healthy.process.returncode is None

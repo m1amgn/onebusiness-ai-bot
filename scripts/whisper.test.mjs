@@ -17,6 +17,12 @@ import test from 'node:test';
 
 import { REPOSITORY_ROOT } from './lib/env.mjs';
 
+const waitForFile = async (path) => {
+  const deadline = Date.now() + 30000;
+  while (!existsSync(path) && Date.now() < deadline) await setTimeout(20);
+  assert.ok(existsSync(path), 'the fake server must produce its readiness marker');
+};
+
 const stopGroup = (pid) => {
   if (!pid) return;
   try {
@@ -58,7 +64,7 @@ fs.writeFileSync(marker, JSON.stringify(process.argv.slice(2)));
   }
   const env = { ...process.env, PATH: bin, MARKER: marker };
   delete env.WHISPER_DEV_MODEL_PATH;
-  const options = { cwd: root, env, encoding: 'utf8', timeout: 5000 };
+  const options = { cwd: root, env, encoding: 'utf8', timeout: 30000 };
   return {
     root,
     marker,
@@ -74,8 +80,7 @@ fs.writeFileSync(marker, JSON.stringify(process.argv.slice(2)));
       const exited = new Promise((resolveExit) => {
         launcher.once('exit', (code, signal) => resolveExit({ code, signal }));
       });
-      for (let attempt = 0; attempt < 100 && !existsSync(marker); attempt++) await setTimeout(20);
-      assert.ok(existsSync(marker), 'the fake server must start');
+      await waitForFile(marker);
       return { launcher, exited };
     },
   };
@@ -131,8 +136,18 @@ test('whisper expands ~/ and preserves a server failure exit code', (t) => {
   assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')).slice(0, 2), ['-m', model]);
 });
 
+test('whisper waits for a slow server readiness marker', { timeout: 35000 }, async (t) => {
+  const { start } = whisperFixture(
+    t,
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2500); setInterval(() => {}, 1000);',
+  );
+  const { launcher, exited } = await start();
+  launcher.kill('SIGTERM');
+  assert.deepEqual(await exited, { code: 0, signal: null });
+});
+
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  test(`whisper exits successfully after forwarding ${signal}`, { timeout: 8000 }, async (t) => {
+  test(`whisper exits successfully after forwarding ${signal}`, { timeout: 35000 }, async (t) => {
     const { start } = whisperFixture(t, 'setInterval(() => {}, 1000);');
     const { launcher, exited } = await start();
     launcher.kill(signal);
@@ -142,7 +157,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 test(
   'a second interrupt kills a server that ignores its first signal',
-  { timeout: 8000 },
+  { timeout: 65000 },
   async (t) => {
     const { start, marker } = whisperFixture(
       t,
@@ -150,9 +165,7 @@ test(
     );
     const { launcher, exited } = await start();
     launcher.kill('SIGINT');
-    for (let attempt = 0; attempt < 100 && !existsSync(marker + '.signals'); attempt++) {
-      await setTimeout(20);
-    }
+    await waitForFile(marker + '.signals');
     assert.equal(readFileSync(marker + '.signals', 'utf8'), 'SIGINT\n');
     launcher.kill('SIGINT');
     assert.deepEqual(await exited, { code: 0, signal: null });

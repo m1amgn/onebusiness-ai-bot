@@ -319,6 +319,14 @@ use per-session databases and namespaces, never development rows. A live check
 uses separate test credentials typed into this worktree's untracked dotenv file;
 record the result in the README.
 
+tests/integration/test_end_to_end.py joins that bot harness to real Celery workers,
+PostgreSQL, Redis and the HTTP/SSE API. Only Telegram and provider calls use doubles.
+All processes share the bot harness's namespace. It checks both text and voice
+creation, notification, task events and authenticated task reads. Runtime effect
+waits use tests/processes.py's cold-start budget; ETA restart tests observe scheduled
+work before stopping the worker. docs/development.md lists load-sensitive tests;
+the list explains failures and never removes them from the final verification.
+
 ## Worker runtime
 
 TranscribeWorkerSettings declares provider and extractor settings separately from
