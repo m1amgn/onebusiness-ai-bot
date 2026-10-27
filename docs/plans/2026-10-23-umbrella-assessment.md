@@ -401,7 +401,7 @@ What a person gets, stage by stage, on their own machine:
 
 S4, S5, S6 and S9 can run as parallel children (two at a time given machine load), S7 after S6, and S10 after S4 (section 18). Total: about 44–67 hours of agent work; on a calendar with two children in parallel and the owner's answers within the hour, roughly seven to nine working days to a hand-in-ready repository. The owner's time: one grill per stage (ten to twenty questions) and one acceptance table per stage.
 
-Owner's acceptance of this statement, 2026-10-23: «Да, принимаю». The S10 row was added by amendment 7 (section 18), which raises the total to about 46–71 hours.
+Owner's acceptance of this statement, 2026-10-23: «Да, принимаю». The S10 row was added by amendment 7 (section 18), which raises the total to about 46–71 hours; the owner accepted it, and S8's wait for S10, on 2026-10-27: «Да».
 
 ## 11. Pre-handoff review record
 
