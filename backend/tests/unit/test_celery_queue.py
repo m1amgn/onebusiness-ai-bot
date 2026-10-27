@@ -97,7 +97,10 @@ finally:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-async def test_queue_sends_json_on_its_thread_and_eagerly_resolves_pool() -> None:
+async def test_queue_sends_json_on_its_thread_and_eagerly_resolves_pool(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="taskbot.infrastructure.celery.job_queue")
     app = Mock(spec=Celery)
     constructor_thread = threading.get_ident()
     pool_threads: list[int] = []
@@ -122,6 +125,7 @@ async def test_queue_sends_json_on_its_thread_and_eagerly_resolves_pool() -> Non
         queue.close()
     with pytest.raises(RuntimeError, match="shutdown"):
         await queue.enqueue(TranscriptionJob(voice_job_id=7))
+    assert "Producer threads drained and closed" in caplog.text
 
 
 async def test_negative_delay_is_refused_before_send() -> None:

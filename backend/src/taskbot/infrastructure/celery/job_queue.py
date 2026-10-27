@@ -45,3 +45,4 @@ class CeleryJobQueue:
     def close(self) -> None:
         """Drain producer threads before child shutdown closes loop-owned clients."""
         self._executor.shutdown(wait=True, cancel_futures=True)
+        logger.info("Producer threads drained and closed")

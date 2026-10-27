@@ -254,8 +254,9 @@ domain job classes. CeleryJobQueue serializes those models as JSON and publishes
 its dedicated four-thread executor. It resolves producer_pool before threaded use.
 Negative countdowns are refused; countdowns above 600 seconds are clamped and logged
 at debug. OperationalError becomes EnqueueError with its cause preserved.
-Call the queue's synchronous close() before child shutdown closes loop-owned clients;
-it waits for running sends and cancels executor work that has not started. Cancellation
+Call the queue's synchronous close() before child shutdown closes loop-owned clients.
+It waits for running sends and cancels executor work that has not started.
+close() then logs "Producer threads drained and closed". Cancellation
 of an enqueue awaiter does not stop an already-running broker operation. Broker socket
 timeouts and bounded retries limit those operations; queued sends add executor batches.
 
@@ -426,7 +427,11 @@ It kills residual owned groups in a finalizer. Beat runs in a private temporary 
 verify its namespaced schedule in the nested per-user directory while it runs,
 then remove the harness's entire private temporary root after all children exit.
 Never run test workers against unnamespaced shared development queues.
-S8 owns Linux prefork, Compose delivery and restart: unless-stopped verification.
+Root scripts/stack-acceptance.mjs verifies Linux prefork in an owned Compose project,
+including real child tasks, init layout, fatal-child automatic restart and warm shutdown.
+It mounts tests read-only for one-off probes only. tests/stack_worker_probe.py records
+the pool child's actual parent, recorded main PID, init name and uid without secrets.
+Production images contain no test hooks. The normal health checks remain unchanged.
 
 The offline voice replay is tests/acceptance/replay_s5.py with
 TASKBOT_ENV_FILE=/dev/null. Its frozen V1-V12 expectations are s5_expected.json.
