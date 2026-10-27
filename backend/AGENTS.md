@@ -159,6 +159,11 @@ Collect-only runs do not probe the stores. `pytest tests/unit` also runs without
 
 Use root `yarn infra:up` and `yarn infra:stop`; direct Compose bypasses the guard.
 The shared stack belongs to the machine. Leave it running; never delete its volumes.
+The delivered Compose project defaults to taskbot-app and publishes only web.
+The infrastructure launcher selects taskbot explicitly and adds docker/dev-infra.ports.yml.
+For that shared project it uses scripts/empty.env and removes shell POSTGRES_* variables,
+so a copied or customized dotenv file cannot change the shared database credentials.
+An isolated taskbot-* project keeps its dotenv credentials and requires distinct ports.
 Each writing test session creates `taskbot_test_<unix-time>_<random>`, applies
 schema/migrations and drops its database. S2 owns that fixture and stale cleanup.
 Tests never write to the development database. Each Redis session uses unique

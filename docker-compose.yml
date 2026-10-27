@@ -1,16 +1,76 @@
-name: ${TASKBOT_STACK:-taskbot}
+name: taskbot-app
+
+# The application publishes only web. The development launcher adds database ports.
+x-hardening: &hardening
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-backend: &backend
+  <<: [*hardening, *logging]
+  image: ${COMPOSE_PROJECT_NAME:-taskbot-app}-backend
+  build:
+    context: .
+    dockerfile: docker/backend.Dockerfile
+  init: true
+  tmpfs:
+    - /tmp
+
+x-database-environment: &database-environment
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-taskbot}:${POSTGRES_PASSWORD:-taskbot}@postgres:5432/${POSTGRES_DB:-taskbot}
+
+x-redis-environment: &redis-environment
+  REDIS_URL: redis://redis:6379/0
+
+x-log-environment: &log-environment
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-telegram-environment: &telegram-environment
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+
+x-web-environment: &web-environment
+  WEB_BASE_URL: http://localhost:${WEB_PORT:-8080}
+
+x-extractor-environment: &extractor-environment
+  TASK_EXTRACTOR: ${TASK_EXTRACTOR:-heuristic}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-5-5}
+
+x-transcription-environment: &transcription-environment
+  TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-openai}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+x-application-dependencies: &application-dependencies
+  migrate:
+    condition: service_completed_successfully
+  redis:
+    condition: service_healthy
 
 services:
   postgres:
-    image: postgres:18-alpine
+    <<: [*hardening, *logging]
+    image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+    user: "70:70"
+    restart: unless-stopped
+    mem_limit: 512m
     environment:
-      POSTGRES_USER: taskbot
-      POSTGRES_PASSWORD: taskbot
-      POSTGRES_DB: taskbot
-    ports:
-      - "127.0.0.1:${TASKBOT_PG_PORT:-5432}:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-taskbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taskbot}
+      POSTGRES_DB: ${POSTGRES_DB:-taskbot}
     volumes:
       - postgres-data:/var/lib/postgresql
+    tmpfs:
+      - /var/run/postgresql:uid=70,gid=70,mode=1777
+      - /tmp
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 2s
@@ -19,9 +79,11 @@ services:
       start_period: 5s
 
   redis:
-    image: redis:8
-    ports:
-      - "127.0.0.1:${TASKBOT_REDIS_PORT:-6379}:6379"
+    <<: [*hardening, *logging]
+    image: redis:8.10.2@sha256:97ec88159e6d7cfb5ddef9015386087d58a912de80112f06ebdfa78fa5989901
+    user: "999:999"
+    restart: unless-stopped
+    mem_limit: 128m
     volumes:
       - redis-data:/data
     healthcheck:
@@ -30,6 +92,176 @@ services:
       timeout: 2s
       retries: 30
 
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    mem_limit: 256m
+    environment:
+      <<: *database-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command:
+      - python
+      - -m
+      - uvicorn
+      - --factory
+      - taskbot.entrypoints.api.app:create_app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --timeout-graceful-shutdown
+      - "2"
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      <<: [*database-environment, *redis-environment, *log-environment]
+    depends_on: *application-dependencies
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  bot:
+    <<: *backend
+    command: ["python", "-m", "taskbot.entrypoints.bot"]
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    environment:
+      <<: [*database-environment, *redis-environment, *log-environment,
+           *telegram-environment, *web-environment, *extractor-environment,
+           *transcription-environment]
+    depends_on: *application-dependencies
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os, sys; from redis import Redis; client = Redis.from_url(os.environ['REDIS_URL'], socket_connect_timeout=3, socket_timeout=3); sys.exit(0 if client.exists('heartbeat:bot') else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  worker-transcribe:
+    <<: *backend
+    command: ["python", "-m", "taskbot.entrypoints.worker"]
+    restart: unless-stopped
+    stop_grace_period: 480s
+    mem_limit: 768m
+    environment:
+      <<: [*database-environment, *redis-environment, *telegram-environment,
+           *extractor-environment, *transcription-environment]
+      WORKER_ROLE: transcribe
+      OPENAI_TRANSCRIPTION_MODEL: ${OPENAI_TRANSCRIPTION_MODEL:-gpt-transcribe}
+      WHISPER_SERVER_URL: http://whisper:8080
+    depends_on:
+      <<: *application-dependencies
+      whisper:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A taskbot.entrypoints.worker inspect ping -d transcribe@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+
+  worker-notify:
+    <<: *backend
+    command: ["python", "-m", "taskbot.entrypoints.worker"]
+    restart: unless-stopped
+    stop_grace_period: 100s
+    mem_limit: 1g
+    environment:
+      <<: [*database-environment, *redis-environment, *telegram-environment]
+      WORKER_ROLE: notify
+    depends_on: *application-dependencies
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A taskbot.entrypoints.worker inspect ping -d notify@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+
+  web:
+    <<: [*hardening, *logging]
+    image: ${COMPOSE_PROJECT_NAME:-taskbot-app}-web
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 5s
+    mem_limit: 128m
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"
+    tmpfs:
+      - /tmp
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  whisper:
+    <<: [*hardening, *logging]
+    image: ${COMPOSE_PROJECT_NAME:-taskbot-app}-whisper
+    build:
+      context: .
+      dockerfile: docker/whisper.Dockerfile
+    profiles: [whisper]
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        /usr/local/bin/download-whisper-model "$$WHISPER_MODEL" &&
+        exec whisper-server --host 0.0.0.0 --port 8080 --convert --tmp-dir /tmp
+        -l auto -m "/models/ggml-$$WHISPER_MODEL.bin"
+    restart: unless-stopped
+    mem_limit: ${WHISPER_MEM_LIMIT:-1g}
+    volumes:
+      - whisper-models:/models
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10m
+
+  seed:
+    <<: *backend
+    profiles: [tools]
+    entrypoint: ["python", "-m", "taskbot.entrypoints.seed"]
+    command: []
+    restart: "no"
+    mem_limit: 512m
+    environment:
+      <<: [*database-environment, *redis-environment, *log-environment,
+           *web-environment, *extractor-environment]
+    depends_on: *application-dependencies
+
 volumes:
   postgres-data:
   redis-data:
+  whisper-models:

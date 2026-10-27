@@ -28,6 +28,15 @@ export const buildInfraCommand = (action, environment = process.env, root = REPO
   ) {
     throw new Error('An isolated stack needs its own distinct PostgreSQL and Redis ports.');
   }
+  const env = {
+    ...environment,
+    TASKBOT_STACK: stack,
+    TASKBOT_PG_PORT: pg,
+    TASKBOT_REDIS_PORT: redis,
+  };
+  if (stack === 'taskbot') {
+    for (const key of ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB']) delete env[key];
+  }
   return {
     args: [
       'compose',
@@ -35,11 +44,14 @@ export const buildInfraCommand = (action, environment = process.env, root = REPO
       stack,
       '--file',
       join(root, 'docker-compose.yml'),
+      '--file',
+      join(root, 'docker/dev-infra.ports.yml'),
       '--project-directory',
       root,
+      ...(stack === 'taskbot' ? ['--env-file', join(root, 'scripts/empty.env')] : []),
       ...(action === 'up' ? ['up', '-d', '--wait', 'postgres', 'redis'] : ['stop']),
     ],
-    env: { ...environment, TASKBOT_STACK: stack, TASKBOT_PG_PORT: pg, TASKBOT_REDIS_PORT: redis },
+    env,
   };
 };
 

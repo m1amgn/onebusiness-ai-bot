@@ -75,6 +75,9 @@ buttons remain available for keyboard and touch.
 Use root `yarn infra:up` and `yarn infra:stop`; direct Compose bypasses the guard.
 The shared taskbot PostgreSQL/Redis stack belongs to the machine; leave it running.
 Never delete its volumes. Isolated stacks require their own project and ports.
+The delivered taskbot-app project publishes only nginx on 127.0.0.1:8080 by default.
+Its API stays internal; requests and SSE use the same /api origin through nginx.
+Only the infrastructure launcher adds docker/dev-infra.ports.yml for database ports.
 An integration test that writes data creates and drops its own PostgreSQL database.
 It uses unique prefixes for Redis keys, channels, locks and queues. Tests never assume
 exclusive infrastructure and never write to the development database.

@@ -76,8 +76,12 @@ test('infrastructure permits defaults and pins the validated isolated target', (
     'taskbot',
     '--file',
     '/repository/docker-compose.yml',
+    '--file',
+    '/repository/docker/dev-infra.ports.yml',
     '--project-directory',
     '/repository',
+    '--env-file',
+    '/repository/scripts/empty.env',
     'up',
     '-d',
     '--wait',
@@ -93,17 +97,46 @@ test('infrastructure permits defaults and pins the validated isolated target', (
   };
   for (const action of ['up', 'stop']) {
     const command = buildInfraCommand(action, env, '/repository');
-    assert.deepEqual(command.args.slice(0, 7), [
+    assert.deepEqual(command.args.slice(0, 9), [
       'compose',
       '--project-name',
       'taskbot-test',
       '--file',
       '/repository/docker-compose.yml',
+      '--file',
+      '/repository/docker/dev-infra.ports.yml',
       '--project-directory',
       '/repository',
     ]);
-    assert.equal(command.args[7], action);
+    assert.equal(command.args[9], action);
+    assert.equal(command.args.includes('--env-file'), false);
   }
+});
+
+test('shared infrastructure ignores dotenv and shell PostgreSQL credentials', () => {
+  const environment = {
+    POSTGRES_USER: 'otherUser',
+    POSTGRES_PASSWORD: 'otherPassword',
+    POSTGRES_DB: 'otherDatabase',
+  };
+  for (const action of ['up', 'stop']) {
+    const command = buildInfraCommand(action, environment, '/repository');
+    assert.equal(
+      command.args[command.args.indexOf('--env-file') + 1],
+      '/repository/scripts/empty.env',
+    );
+    for (const key of ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB']) {
+      assert.equal(Object.hasOwn(command.env, key), false);
+      assert.ok(environment[key], 'the caller environment must stay unchanged');
+    }
+  }
+  const isolated = buildInfraCommand('up', {
+    ...environment,
+    TASKBOT_STACK: 'taskbot-isolated',
+    TASKBOT_PG_PORT: '15432',
+    TASKBOT_REDIS_PORT: '16379',
+  });
+  assert.equal(isolated.env.POSTGRES_PASSWORD, 'otherPassword');
 });
 
 test('infrastructure refuses unsafe names, ports and incomplete isolated settings', () => {
