@@ -2,16 +2,8 @@ import assert from 'node:assert/strict';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { buildInfraCommand } from '../infra.mjs';
-import { runCommand } from './stack-runtime.mjs';
+import { DOCKER_ENVIRONMENT, runCommand } from './stack-runtime.mjs';
 
-const DOCKER_ENVIRONMENT = [
-  'PATH',
-  'HOME',
-  'DOCKER_HOST',
-  'DOCKER_CONTEXT',
-  'DOCKER_CONFIG',
-  'TMPDIR',
-];
 const POSTGRES = {
   POSTGRES_USER: 'SyntheticUser',
   POSTGRES_PASSWORD: 'SyntheticPassword',

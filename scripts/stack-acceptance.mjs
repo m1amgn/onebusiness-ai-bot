@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { isMain } from './lib/entrypoint.mjs';
 import { REPOSITORY_ROOT } from './lib/env.mjs';
+import { checkReadmeCommands } from './lib/readme-commands.mjs';
 import { checkImagePins, checkSharedConfig } from './lib/stack-config.mjs';
-import { checkStreamRestart, checkWeb, readTasks } from './lib/stack-http.mjs';
+import { checkSeedLink, checkStreamRestart, checkWeb, readTasks } from './lib/stack-http.mjs';
 import {
   assertNormalContainers,
   createStack,
@@ -127,7 +128,7 @@ const seed = async (ctx) => {
   const token = result.stdout.match(/^Token: (\S+)$/m)?.[1];
   const link = result.stdout.match(/^Link: (\S+)$/m)?.[1];
   assert.ok(token && link, 'seed did not produce credentials');
-  assert.equal(new URL(link).origin, ctx.baseUrl.replace('127.0.0.1', 'localhost'));
+  checkSeedLink(ctx.baseUrl, link, token);
   const tasks = await readTasks(ctx.baseUrl, token);
   assert.ok(tasks.items.some((item) => item.source_text === 'Call the acceptance team tomorrow.'));
   return { token, tasks };
@@ -227,18 +228,14 @@ export const acceptance = async ({
     const exampleEnv = join(ctx.scratch, 'example.env');
     await copyFile(join(root, '.env.example'), exampleEnv);
     ctx.envFile = exampleEnv;
-    const readme = await readFile(join(root, 'README.md'), 'utf8');
-    console.log(
-      'README command reference: the replay uses isolated equivalents; yarn verify runs separately.',
-    );
-    for (const block of readme.matchAll(/```sh\n([\s\S]*?)\n```/g))
-      console.log(`REFERENCE\n${block[1]}`);
-    for (const inline of readme.matchAll(/`((?:docker compose|yarn|node)\s[^`\n]+)`/g))
-      console.log(`REFERENCE ${inline[1]}`);
+    const config = JSON.parse((await ctx.compose(['config', '--format', 'json'])).stdout);
+    const readmeCommands = await checkReadmeCommands(root, config.services);
+    for (const command of readmeCommands) console.log(`README VERIFIED ${command}`);
     if (token) await assertNoOtherPoller(ctx, token);
     const shared = await sharedSnapshot(ctx);
     const report = {
       project: ctx.project,
+      readmeCommands,
       sharedConfig: await checkSharedConfig(ctx),
       pins: await checkImagePins(ctx),
       images: await prepareImages(ctx, reuse),
@@ -246,6 +243,7 @@ export const acceptance = async ({
       diagnostics: {},
     };
     // Keyless rows use the same production settings, with no provider key or bot token.
+    await ctx.selectPort();
     await ctx.compose(['up', '--no-build', '-d', '--wait', '--wait-timeout', '180', ...SERVICES], {
       env: { TELEGRAM_BOT_TOKEN: '' },
       timeout: 210000,

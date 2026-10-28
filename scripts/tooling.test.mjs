@@ -154,7 +154,7 @@ test('infrastructure refuses unsafe names, ports and incomplete isolated setting
 });
 
 test('infrastructure rejects invalid names before valid isolated ports can reach Docker', () => {
-  for (const stack of ['other', 'taskbot-', 'taskbot-X']) {
+  for (const stack of ['other', 'taskbot-', 'taskbot-X', 'taskbot-app']) {
     assert.throws(
       () =>
         buildInfraCommand('up', {

@@ -5,13 +5,42 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { prepareImages, readAcceptanceToken } from './stack-acceptance.mjs';
+import { checkWhisper } from './lib/stack-whisper.mjs';
 import {
   acceptanceEnvironment,
   assertOwnedProject,
   createStack,
+  diagnosticTail,
   runCommand,
   withCleanup,
 } from './lib/stack-runtime.mjs';
+
+test('diagnostic tails redact bearer, URL and environment credentials before truncation', () => {
+  const text = diagnosticTail(
+    'x'.repeat(5000) +
+      '\nBearer private-bearer\nhttp://user:password@host/path?ticket=private-ticket\nToken: private-link-token\nfixture-secret',
+    { TEST_SECRET: 'fixture-secret' },
+  );
+  assert.ok(text.length <= 4000);
+  for (const secret of [
+    'private-bearer',
+    'password',
+    'private-ticket',
+    'private-link-token',
+    'fixture-secret',
+  ])
+    assert.ok(!text.includes(secret));
+  assert.ok(text.includes('[REDACTED]'));
+});
+
+test('whisper refuses every non-owned project before any Docker operation', async () => {
+  for (const project of ['taskbot', 'taskbot-app', 'taskbot-e2e', 'taskbot-e2e-loose_name']) {
+    await assert.rejects(
+      checkWhisper({ project, compose: () => assert.fail('Docker must not run') }),
+      /owned acceptance project/,
+    );
+  }
+});
 
 test('acceptance ignores dotenv credentials by default and requires explicit Telegram opt-in', async () => {
   const root = await mkdtemp(join(tmpdir(), 'taskbot-acceptance-token-'));
@@ -135,6 +164,52 @@ test('destructive cleanup refuses shared and delivered project names', () => {
   assert.doesNotThrow(() => assertOwnedProject('taskbot-e2e-123-a1b2'));
 });
 
+test('failure diagnostics keep a bounded stderr tail and redact secrets', async () => {
+  await assert.rejects(
+    runCommand(
+      process.execPath,
+      [
+        '-e',
+        'console.error("x".repeat(20000)); console.error("DNS lookup failed " + process.env.TEST_SECRET); process.exit(7)',
+      ],
+      {
+        env: { ...process.env, TEST_SECRET: 'private-fixture-token' },
+      },
+    ),
+    (error) =>
+      error.message.includes('DNS lookup failed') &&
+      !error.message.includes('private-fixture-token') &&
+      error.message.length < 5000,
+  );
+});
+
+test('health timeout includes a bounded redacted service log', async (t) => {
+  const ctx = await createStack('/repository', 'private-fixture-token');
+  t.after(() => rm(ctx.scratch, { recursive: true, force: true }));
+  ctx.compose = async (args) => ({
+    stdout:
+      args[0] === 'logs' ? 'curl: connection timed out private-fixture-token' : 'container-id',
+    stderr: '',
+  });
+  ctx.inspect = async () => [{ State: { Health: { Status: 'starting' } } }];
+  await assert.rejects(
+    ctx.waitHealthy('whisper', 10),
+    (error) =>
+      error.message.includes('curl: connection timed out') &&
+      !error.message.includes('private-fixture-token'),
+  );
+});
+
+test('web port is selected after image preparation, just before startup', async (t) => {
+  const ctx = await createStack('/repository', '');
+  t.after(() => rm(ctx.scratch, { recursive: true, force: true }));
+  assert.equal(ctx.port, undefined);
+  await ctx.selectPort();
+  assert.ok(ctx.port > 0);
+  assert.equal(ctx.env.WEB_PORT, String(ctx.port));
+  assert.equal(new URL(ctx.baseUrl).port, String(ctx.port));
+});
+
 test('cleanup runs once after failure and after an interrupt', async () => {
   let cleaned = 0;
   await assert.rejects(
@@ -197,7 +272,9 @@ test('commands bound stalled children and preserve binary dumps without exposing
   });
   assert.deepEqual(result.stdout, bytes);
   await assert.rejects(
-    runCommand(process.execPath, ['-e', 'console.error("secret-value");process.exit(7)']),
+    runCommand(process.execPath, ['-e', 'console.error(process.env.TEST_SECRET);process.exit(7)'], {
+      env: { ...process.env, TEST_SECRET: 'secret-value' },
+    }),
     (error) => error.message.includes('7') && !error.message.includes('secret-value'),
   );
 });

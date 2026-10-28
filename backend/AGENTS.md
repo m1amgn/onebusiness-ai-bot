@@ -164,6 +164,7 @@ The infrastructure launcher selects taskbot explicitly and adds docker/dev-infra
 For that shared project it uses scripts/empty.env and removes shell POSTGRES_* variables,
 so a copied or customized dotenv file cannot change the shared database credentials.
 An isolated taskbot-* project keeps its dotenv credentials and requires distinct ports.
+The launcher refuses taskbot-app because that name belongs to the delivered application.
 Each writing test session creates `taskbot_test_<unix-time>_<random>`, applies
 schema/migrations and drops its database. S2 owns that fixture and stale cleanup.
 Tests never write to the development database. Each Redis session uses unique

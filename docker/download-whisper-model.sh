@@ -14,7 +14,9 @@ target="$directory/ggml-$model.bin"
 
 # A failed or interrupted transfer is never mistaken for the verified model.
 partial="$target.part"
-curl -fL --retry 5 --output "$partial" \
+curl -fL --connect-timeout 10 --max-time 300 \
+  --speed-limit 1024 --speed-time 20 \
+  --retry 5 --retry-max-time 300 --retry-all-errors --output "$partial" \
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$model.bin"
 printf '%s  %s\n' "$checksum" "$partial" | sha256sum -c -
 mv "$partial" "$target"

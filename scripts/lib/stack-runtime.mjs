@@ -6,6 +6,37 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { stripVTControlCharacters } from 'node:util';
+
+export const DOCKER_ENVIRONMENT = [
+  'PATH',
+  'HOME',
+  'DOCKER_HOST',
+  'DOCKER_CONTEXT',
+  'DOCKER_CONFIG',
+  'TMPDIR',
+];
+
+export const diagnosticTail = (value, env = {}) => {
+  let text = stripVTControlCharacters(String(value));
+  const secrets = Object.entries(env)
+    .filter(
+      ([key, secret]) =>
+        /TOKEN|KEY|PASSWORD|SECRET|DATABASE_URL|BROKER_URL|REDIS_URL/.test(key) && secret,
+    )
+    .map(([, secret]) => String(secret))
+    .sort((a, b) => b.length - a.length);
+  for (const secret of secrets) text = text.replaceAll(secret, '[REDACTED]');
+  text = text
+    .replace(/(Bearer\s+)\S+/gi, '$1[REDACTED]')
+    .replace(/([?&#](?:ticket|token)=)[^&\s"']+/gi, '$1[REDACTED]')
+    .replace(
+      /(\b(?:Token:|\w*(?:TOKEN|KEY|PASSWORD|SECRET)\w*\s*[=:])\s*)[^\s"']+/gi,
+      '$1[REDACTED]',
+    )
+    .replace(/:\/\/[^\s/@]+:[^\s/@]+@/g, '://[REDACTED]@');
+  return text.split('\n').slice(-40).join('\n').slice(-4000).trim();
+};
 
 export const assertOwnedProject = (project) => {
   if (!/^taskbot-e2e-[a-z0-9]+-[a-z0-9]+$/.test(project)) {
@@ -14,13 +45,9 @@ export const assertOwnedProject = (project) => {
 };
 
 export const acceptanceEnvironment = (source, { project, port, token = '' }) => ({
-  ...Object.fromEntries(
-    Object.entries(source).filter(([key]) =>
-      ['PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'TMPDIR'].includes(key),
-    ),
-  ),
+  ...Object.fromEntries(Object.entries(source).filter(([key]) => DOCKER_ENVIRONMENT.includes(key))),
   COMPOSE_PROJECT_NAME: project,
-  WEB_PORT: String(port),
+  ...(port === undefined ? {} : { WEB_PORT: String(port) }),
   POSTGRES_USER: 'AcceptanceUser',
   POSTGRES_PASSWORD: 'AcceptancePassword',
   POSTGRES_DB: 'AcceptanceDatabase',
@@ -106,10 +133,15 @@ export const runCommand = (
       const convert = (chunks) =>
         encoding === 'buffer' ? Buffer.concat(chunks) : Buffer.concat(chunks).toString(encoding);
       const result = { code, stdout: convert(stdout), stderr: convert(stderr) };
-      if (reason) reject(new Error(reason));
-      else if (code !== 0 && !allowFailure)
-        reject(Object.assign(new Error(`${label} failed (exit ${code})`), { result }));
-      else resolve(result);
+      if (reason || (code !== 0 && !allowFailure)) {
+        const details = diagnosticTail(result.stderr, env);
+        const message = diagnosticTail(reason ?? `${label} failed (exit ${code})`, env);
+        reject(
+          Object.assign(new Error(`${message}${details ? `\n${details}` : ''}`), {
+            result: { code, stdout: diagnosticTail(result.stdout, env), stderr: details },
+          }),
+        );
+      } else resolve(result);
     });
   });
 
@@ -145,7 +177,7 @@ export const waitFor = async (label, probe, { timeout = 120000, interval = 500, 
     if (value) return value;
     await delay(interval, undefined, { signal });
   }
-  throw new Error(`${label} timed out`);
+  throw Object.assign(new Error(`${label} timed out`), { code: 'WAIT_TIMEOUT' });
 };
 
 const freePort = () =>
@@ -162,20 +194,24 @@ export const createStack = async (root, token) => {
   const project = `taskbot-e2e-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
   assertOwnedProject(project);
   const scratch = await mkdtemp(join(tmpdir(), `${project}-`));
-  const port = await freePort();
-  const env = acceptanceEnvironment(process.env, { project, port, token });
+  const env = acceptanceEnvironment(process.env, { project, token });
   const emptyEnv = join(scratch, 'empty.env');
   await writeFile(emptyEnv, '', { mode: 0o600 });
   const ctx = {
     root,
     project,
     scratch,
-    port,
+    port: undefined,
     env,
     envFile: emptyEnv,
     signal: undefined,
     builder: false,
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl: undefined,
+    selectPort: async () => {
+      ctx.port = await freePort();
+      env.WEB_PORT = String(ctx.port);
+      ctx.baseUrl = `http://127.0.0.1:${ctx.port}`;
+    },
     commands: [],
     measurements: {},
     memoryLimits: {},
@@ -205,7 +241,7 @@ export const createStack = async (root, token) => {
         `docker ${args[0]} ${args[0] === 'compose' ? (args.find((arg) => ['up', 'down', 'exec', 'run', 'stop', 'start', 'restart', 'rm', 'build', 'logs', 'ps'].includes(arg)) ?? '') : (args[1] ?? '')}`;
       if (!ctx.commands.includes(commandLabel)) {
         ctx.commands.push(commandLabel);
-        console.log(`$ ${commandLabel}`);
+        console.log(`$ ${diagnosticTail(commandLabel, env)}`);
       }
       return runCommand('docker', args, {
         env: { ...env, ...extra },
@@ -216,17 +252,34 @@ export const createStack = async (root, token) => {
     },
     id: async (service) => (await ctx.compose(['ps', '--all', '--quiet', service])).stdout.trim(),
     inspect: async (ids) => JSON.parse((await ctx.docker(['inspect', ...ids])).stdout),
-    waitHealthy: (service, timeout = 120000) =>
-      waitFor(
-        `${service} health`,
-        async () => {
-          const id = await ctx.id(service);
-          if (!id) return false;
-          const [item] = await ctx.inspect([id]);
-          return item.State.Health?.Status === 'healthy';
-        },
-        { timeout, signal: ctx.signal, interval: 1000 },
-      ),
+    waitHealthy: async (service, timeout = 120000) => {
+      try {
+        return await waitFor(
+          `${service} health`,
+          async () => {
+            const id = await ctx.id(service);
+            if (!id) return false;
+            const [item] = await ctx.inspect([id]);
+            return item.State.Health?.Status === 'healthy';
+          },
+          { timeout, signal: ctx.signal, interval: 1000 },
+        );
+      } catch (error) {
+        if (error.code !== 'WAIT_TIMEOUT') throw error;
+        let details = 'Service logs could not be read';
+        try {
+          const logs = await ctx.compose(['logs', '--no-color', '--tail', '40', service], {
+            timeout: 10000,
+            allowFailure: true,
+          });
+          details =
+            diagnosticTail(`${logs.stdout}\n${logs.stderr}`, env) || 'No service log output';
+        } catch {
+          /* Preserve the health failure if log retrieval also fails. */
+        }
+        throw new Error(`${service} health timed out\n${details}`);
+      }
+    },
     capture: async () => {
       const ids = (await ctx.compose(['ps', '--all', '--quiet'])).stdout
         .trim()

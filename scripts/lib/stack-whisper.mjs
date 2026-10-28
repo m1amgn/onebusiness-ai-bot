@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { assertOwnedProject } from './stack-runtime.mjs';
 
 const MODEL = 'base';
 const MODEL_DIGEST = '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe';
@@ -223,10 +224,7 @@ const inference = async (ctx, container, file, contentType) => {
 };
 
 export const checkWhisper = async (ctx) => {
-  requireResult(
-    /^taskbot-e2e-[a-z0-9][a-z0-9_-]*$/.test(ctx.project),
-    'refusing a project outside the owned acceptance namespace',
-  );
+  assertOwnedProject(ctx.project);
   await ctx.compose(['rm', '--stop', '--force', 'whisper'], {
     env: BASE_ENV,
     timeout: 30000,

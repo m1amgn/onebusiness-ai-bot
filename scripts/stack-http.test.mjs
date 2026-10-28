@@ -3,7 +3,23 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { checkStreamRestart, checkWeb, readTasks } from './lib/stack-http.mjs';
+import { checkSeedLink, checkStreamRestart, checkWeb, readTasks } from './lib/stack-http.mjs';
+
+test('seed links must use the issued token at the web root', () => {
+  const origin = 'http://127.0.0.1:18080';
+  const valid = 'http://localhost:18080/#token=fixture-token';
+  assert.doesNotThrow(() => checkSeedLink(origin, valid, 'fixture-token'));
+  for (const link of [
+    valid.replace('/#', '/wrong#'),
+    valid.replace('fixture-token', 'wrong-token'),
+    valid.replace('#token=fixture-token', ''),
+    valid.replace('/#', '/?redirect=1#'),
+    valid.replace('localhost', 'other-host'),
+    'invalid',
+  ]) {
+    assert.throws(() => checkSeedLink(origin, link, 'fixture-token'), /Seed link/);
+  }
+});
 
 const TOKEN = 'synthetic-test-bearer';
 const ASSET = '/assets/index-ABcd1234.js';
@@ -50,6 +66,7 @@ const serve = async (t, { change = () => {}, connected = true } = {}) => {
           ...POLICIES,
           'content-type': 'application/javascript',
           'content-encoding': 'gzip',
+          vary: 'Accept-Encoding',
           'cache-control': 'public, max-age=31536000, immutable',
         },
         body: gzipSync('export const taskbot = true;\n'.repeat(100)),
@@ -115,6 +132,15 @@ const serve = async (t, { change = () => {}, connected = true } = {}) => {
     },
   };
 };
+
+test('gzip asset responses must vary on Accept-Encoding', async (t) => {
+  const site = await serve(t, {
+    change: (path, output) => {
+      if (path === ASSET) delete output.headers.vary;
+    },
+  });
+  await assert.rejects(checkWeb(site.baseUrl), /Vary/);
+});
 
 test('readTasks sends the bearer and returns parsed API JSON', async (t) => {
   const site = await serve(t);

@@ -266,6 +266,11 @@ export const checkHardeningAndBudgets = async (ctx) => {
   for (const item of items) {
     const service = item.Config.Labels['com.docker.compose.service'];
     const host = item.HostConfig;
+    assert.equal(
+      host.RestartPolicy?.Name,
+      service === 'migrate' ? 'no' : 'unless-stopped',
+      `${service} restart policy`,
+    );
     assert.equal(host.ReadonlyRootfs, true, `${service} writable root`);
     assert.ok(host.SecurityOpt.includes('no-new-privileges:true'));
     assert.ok(host.CapDrop.includes('ALL'));

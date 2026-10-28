@@ -32,6 +32,24 @@ const originOf = (baseUrl) => {
   return url.origin;
 };
 
+export const checkSeedLink = (baseUrl, link, token) => {
+  let url;
+  try {
+    url = new URL(link);
+  } catch {
+    throw new Error('Seed link is invalid');
+  }
+  requireCheck(
+    url.origin === originOf(baseUrl).replace('127.0.0.1', 'localhost') &&
+      !url.username &&
+      !url.password &&
+      url.pathname === '/' &&
+      !url.search &&
+      url.hash === `#token=${token}`,
+    'Seed link must use the web root and issued token',
+  );
+};
+
 // Replace transport errors with fixed messages: a fetch error can contain a ticket URL.
 const bounded = async (operation, deadline, label, abort = () => {}) => {
   let timer;
@@ -153,6 +171,12 @@ export const checkWeb = async (baseUrl) => {
     headers: { 'Accept-Encoding': 'gzip' },
   });
   requireStatus(assetResponse, 200, 'Hashed asset');
+  requireCheck(
+    (assetResponse.headers.get('vary') ?? '')
+      .split(',')
+      .some((name) => name.trim().toLowerCase() === 'accept-encoding'),
+    'Hashed asset: Vary must include Accept-Encoding',
+  );
   checkHeaders(assetResponse, 'Hashed asset');
   const cache = assetResponse.headers.get('cache-control') ?? '';
   requireCheck(

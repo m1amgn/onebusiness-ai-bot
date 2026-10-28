@@ -6,9 +6,9 @@ import { loadEnv, REPOSITORY_ROOT } from './lib/env.mjs';
 export const buildInfraCommand = (action, environment = process.env, root = REPOSITORY_ROOT) => {
   if (!['up', 'stop'].includes(action)) throw new Error('Usage: infra.mjs up|stop');
   const stack = environment.TASKBOT_STACK || 'taskbot';
-  if (!/^taskbot(?:-[a-z0-9][a-z0-9_-]*)?$/.test(stack)) {
+  if (stack === 'taskbot-app' || !/^taskbot(?:-[a-z0-9][a-z0-9_-]*)?$/.test(stack)) {
     throw new Error(
-      'An isolated stack name must start with taskbot- and use lowercase letters or digits.',
+      'An isolated stack name must start with taskbot- and use lowercase letters or digits; taskbot-app is reserved for the delivered application.',
     );
   }
   const pg = environment.TASKBOT_PG_PORT || '5432';
