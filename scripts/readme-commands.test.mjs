@@ -3,34 +3,31 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { checkReadmeCommands } from './lib/readme-commands.mjs';
+import { checkReadme, checkReadmeCommands } from './lib/readme-commands.mjs';
 import { acceptanceEnvironment, runCommand } from './lib/stack-runtime.mjs';
 import { REPOSITORY_ROOT } from './lib/env.mjs';
 
 test('every README shell command names an existing service, profile, package script or file', async () => {
-  const { stdout } = await runCommand(
-    'docker',
-    [
-      'compose',
-      '--project-name',
-      'taskbot-e2e-readme-check',
-      '--project-directory',
-      REPOSITORY_ROOT,
-      '--file',
-      join(REPOSITORY_ROOT, 'docker-compose.yml'),
-      '--env-file',
-      join(REPOSITORY_ROOT, 'scripts/empty.env'),
-      '--profile',
-      'tools',
-      '--profile',
-      'whisper',
-      'config',
-      '--format',
-      'json',
-    ],
-    { env: acceptanceEnvironment(process.env, { project: 'taskbot-e2e-readme-check' }) },
-  );
-  const commands = await checkReadmeCommands(REPOSITORY_ROOT, JSON.parse(stdout).services);
+  const commands = await checkReadme({
+    root: REPOSITORY_ROOT,
+    compose: (args) =>
+      runCommand(
+        'docker',
+        [
+          'compose',
+          '--project-name',
+          'taskbot-e2e-readme-check',
+          '--project-directory',
+          REPOSITORY_ROOT,
+          '--file',
+          join(REPOSITORY_ROOT, 'docker-compose.yml'),
+          '--env-file',
+          join(REPOSITORY_ROOT, 'scripts/empty.env'),
+          ...args,
+        ],
+        { env: acceptanceEnvironment(process.env, { project: 'taskbot-e2e-readme-check' }) },
+      ),
+  });
   assert.ok(commands.includes('node scripts/stack-acceptance.mjs'));
   assert.ok(commands.includes('yarn verify'));
 });

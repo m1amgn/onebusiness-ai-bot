@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { isMain } from './lib/entrypoint.mjs';
 import { REPOSITORY_ROOT } from './lib/env.mjs';
-import { checkReadmeCommands } from './lib/readme-commands.mjs';
+import { checkReadme } from './lib/readme-commands.mjs';
 import { checkImagePins, checkSharedConfig } from './lib/stack-config.mjs';
 import { checkSeedLink, checkStreamRestart, checkWeb, readTasks } from './lib/stack-http.mjs';
 import {
@@ -228,8 +228,7 @@ export const acceptance = async ({
     const exampleEnv = join(ctx.scratch, 'example.env');
     await copyFile(join(root, '.env.example'), exampleEnv);
     ctx.envFile = exampleEnv;
-    const config = JSON.parse((await ctx.compose(['config', '--format', 'json'])).stdout);
-    const readmeCommands = await checkReadmeCommands(root, config.services);
+    const readmeCommands = await checkReadme(ctx);
     for (const command of readmeCommands) console.log(`README VERIFIED ${command}`);
     if (token) await assertNoOtherPoller(ctx, token);
     const shared = await sharedSnapshot(ctx);

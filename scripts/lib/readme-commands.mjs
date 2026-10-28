@@ -19,6 +19,11 @@ const flags = new Set([
 ]);
 const valuedFlags = new Set(['--wait-timeout', '--tail', '--timeout', '-t']);
 
+export const checkReadme = async (ctx) => {
+  const config = await ctx.compose(['--profile', '*', 'config', '--format', 'json']);
+  return checkReadmeCommands(ctx.root, JSON.parse(config.stdout).services);
+};
+
 const checkCompose = (words, services) => {
   const profiles = new Set(Object.values(services).flatMap((service) => service.profiles ?? []));
   let index = 2;
