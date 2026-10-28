@@ -1,7 +1,9 @@
 import asyncio
+import logging
 import socket
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, PropertyMock
@@ -136,6 +138,50 @@ async def test_negative_delay_is_refused_before_send() -> None:
             await queue.enqueue(TranscriptionJob(voice_job_id=7), delay_seconds=-1)
         app.send_task.assert_not_called()
     finally:
+        queue.close()
+
+
+def test_close_receipt_follows_an_in_flight_send(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logger = logging.getLogger("taskbot.infrastructure.celery.job_queue")
+    caplog.set_level("INFO", logger=logger.name)
+    started, release, closing = threading.Event(), threading.Event(), threading.Event()
+    app = Mock(spec=Celery)
+
+    def send(*args: object, **kwargs: object) -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("the test did not release the send")
+        logger.info("Synthetic send completed")
+
+    app.send_task.side_effect = send
+    queue = CeleryJobQueue(cast(Celery, app))
+    original_shutdown = queue._executor.shutdown
+
+    def shutdown(wait: bool = True, *, cancel_futures: bool = False) -> None:
+        closing.set()
+        original_shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(queue._executor, "shutdown", shutdown)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as threads:
+            pending = threads.submit(asyncio.run, queue.enqueue(TranscriptionJob(voice_job_id=7)))
+            try:
+                assert started.wait(timeout=2)
+                stopped = threads.submit(queue.close)
+                assert closing.wait(timeout=2)
+                assert not stopped.done()
+            finally:
+                release.set()
+            pending.result(timeout=2)
+            stopped.result(timeout=2)
+        messages = [record.getMessage() for record in caplog.records]
+        assert messages.index("Synthetic send completed") < messages.index(
+            "Producer threads drained and closed"
+        )
+    finally:
+        release.set()
         queue.close()
 
 

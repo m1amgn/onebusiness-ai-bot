@@ -116,6 +116,8 @@ backups, monitoring and image updates. No server has been deployed.
   rate limit. A crash after a text commit can leave a task without a reply or live
   event. Refreshing the board shows committed tasks. A duplicate update creates
   no second task; resending as a new message does.
+  A hard kill, OOM kill or stop beyond the 15-second drain can lose an update still
+  in a handler; Telegram does not resend that update.
 - The bot heartbeat checks healthy polling. It cannot detect ten handlers stuck
   on database locks. After a voice worker crash, recovery can wait for a
   450–460 second lease per attempt.
@@ -161,7 +163,7 @@ runs without credentials by default, ignoring `.env` credentials and inherited
 provider keys. R1's Telegram startup, bot stop/drain and bot memory measurement are
 reported as deferred to the owner's check on final `main`. `--with-telegram`
 enables these checks with the test bot token in `.env`; `--keyless` explicitly
-selects the default. `--reuse-images` requires the three local S8 build tags.
+selects the default.
 
 Verification record, 2026-10-27: development runs verified Telegram handling,
 OpenAI and local Whisper voice, and the Claude extraction replay. The

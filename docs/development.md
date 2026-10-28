@@ -628,6 +628,7 @@ or a failure only on head, is a defect to investigate.
 | Test | Observed failure | Owner |
 |---|---|---|
 | `backend/tests/integration/test_bot_lock.py` | Sub-second lock leases can expire while the machine is busy. | Repository owner |
+| `backend/tests/integration/test_celery_job_queue.py::test_frozen_broker_bounds_thread_batches_and_keeps_dns_available` | The 200 ms event-loop gap assertion reached 229 ms under load; isolated head/base repeats passed. | Repository owner |
 
 The whisper launcher fixtures wait for marker files for up to 30 seconds.
 Worker runtime effect waits use the 120-second cold-start budget. The ETA restart

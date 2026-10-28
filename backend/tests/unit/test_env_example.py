@@ -36,6 +36,9 @@ def test_example_environment_validates_and_contains_no_credentials(
     for settings_type in settings_types:
         for name, field in settings_type.model_fields.items():
             key = name.upper()
+            if key == "WORKER_ROLE":
+                assert key not in values
+                continue
             assert key in values, f"{key} is missing from .env.example"
             if key in {
                 "REDIS_URL",
@@ -57,5 +60,5 @@ def test_example_environment_validates_and_contains_no_credentials(
     MigrationSettings(_env_file=example)
     SeedSettings(_env_file=example)
     BrokerSettings(_env_file=example)
-    WorkerSettings(_env_file=example)
+    WorkerSettings(_env_file=example, worker_role="transcribe")
     BotSettings(_env_file=example, telegram_bot_token=SecretStr("123456:synthetic"))
