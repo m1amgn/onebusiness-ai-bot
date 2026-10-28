@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { prepareImages } from './stack-acceptance.mjs';
+import { prepareImages, readAcceptanceToken } from './stack-acceptance.mjs';
 import {
   acceptanceEnvironment,
   assertOwnedProject,
@@ -9,6 +12,19 @@ import {
   runCommand,
   withCleanup,
 } from './lib/stack-runtime.mjs';
+
+test('acceptance ignores dotenv credentials by default and requires explicit Telegram opt-in', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'taskbot-acceptance-token-'));
+  try {
+    await writeFile(join(root, '.env'), 'TELEGRAM_BOT_TOKEN=fixture-token\n');
+    assert.equal(await readAcceptanceToken(root), '');
+    assert.equal(await readAcceptanceToken(root, false), 'fixture-token');
+    await writeFile(join(root, '.env'), 'TELEGRAM_BOT_TOKEN=\n');
+    await assert.rejects(readAcceptanceToken(root, false), /requires TELEGRAM_BOT_TOKEN/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('a builder created before a Docker client failure is still removed', async () => {
   const ctx = await createStack('/repository', '');

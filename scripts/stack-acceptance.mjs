@@ -203,19 +203,24 @@ const restore = async (ctx, token, expected, bot) => {
   };
 };
 
+export const readAcceptanceToken = async (root, keyless = true) => {
+  if (keyless) return '';
+  let token = '';
+  try {
+    token = parseEnv(await readFile(join(root, '.env'), 'utf8')).TELEGRAM_BOT_TOKEN ?? '';
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  assert.ok(token, 'Token-enabled acceptance requires TELEGRAM_BOT_TOKEN in the untracked .env');
+  return token;
+};
+
 export const acceptance = async ({
   root = REPOSITORY_ROOT,
   reuse = false,
-  keyless = false,
+  keyless = true,
 } = {}) => {
-  let token = '';
-  if (!keyless) {
-    try {
-      token = parseEnv(await readFile(join(root, '.env'), 'utf8')).TELEGRAM_BOT_TOKEN ?? '';
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
+  const token = await readAcceptanceToken(root, keyless);
   const ctx = await createStack(root, token);
   return withCleanup(async (signal) => {
     ctx.signal = signal;
@@ -288,7 +293,8 @@ export const acceptance = async ({
       await start(ctx, true);
     } else
       report.rows.R1 = {
-        status: keyless ? 'SKIP explicitly keyless' : 'PENDING test token required',
+        status: 'DEFERRED owner final-main check',
+        checks: ['A1/R1 Telegram startup', 'A6 bot stop/drain', 'bot memory measurement'],
       };
     row('R1', report.rows.R1);
 
@@ -342,16 +348,19 @@ export const acceptance = async ({
         `${service} needs a memory limit of at least twice its peak (${peak} bytes)`,
       );
     }
-    if (!token && !keyless)
-      throw new Error('R1 is pending: add a test TELEGRAM_BOT_TOKEN to the untracked .env');
     return report;
   }, ctx.cleanup);
 };
 
 if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.some((arg) => !['--reuse-images', '--keyless'].includes(arg))) {
-    console.error('Usage: node scripts/stack-acceptance.mjs [--reuse-images] [--keyless]');
+  if (
+    args.some((arg) => !['--reuse-images', '--keyless', '--with-telegram'].includes(arg)) ||
+    (args.includes('--keyless') && args.includes('--with-telegram'))
+  ) {
+    console.error(
+      'Usage: node scripts/stack-acceptance.mjs [--reuse-images] [--keyless | --with-telegram]',
+    );
     process.exitCode = 2;
   } else {
     console.log(
@@ -359,7 +368,7 @@ if (isMain(import.meta.url)) {
     );
     acceptance({
       reuse: args.includes('--reuse-images'),
-      keyless: args.includes('--keyless'),
+      keyless: !args.includes('--with-telegram'),
     }).catch((error) => {
       console.error(error.message);
       process.exitCode = 1;

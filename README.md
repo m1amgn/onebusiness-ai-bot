@@ -157,16 +157,21 @@ node scripts/stack-acceptance.mjs
 
 The replay prints R1–R7 results, uses its own project and free web port, disables
 paid calls for synthetic tasks and cleans up on success, failure or Ctrl-C. It
-needs a test bot token for R1. `--keyless` skips that row; `--reuse-images` is an
-implementation-only shortcut for the three local S8 build tags.
+runs without credentials by default, ignoring `.env` credentials and inherited
+provider keys. R1's Telegram startup, bot stop/drain and bot memory measurement are
+reported as deferred to the owner's check on final `main`. `--with-telegram`
+enables these checks with the test bot token in `.env`; `--keyless` explicitly
+selects the default. `--reuse-images` requires the three local S8 build tags.
 
 Verification record, 2026-10-27: development runs verified Telegram handling,
 OpenAI and local Whisper voice, and the Claude extraction replay. The
 [development guide](docs/development.md) keeps dates and timings. Docker checks
 verified keyless sign-in, nginx, stream reconnection, persistence, dump/restore,
 Linux worker failure/shutdown and real CPU Whisper inference. The owner's
-Telegram/OpenAI/Whisper/Claude check of the reviewed Docker build remains pending.
-The automatic token-enabled startup check also awaits the test bot token.
+Telegram/OpenAI/Whisper/Claude check, Telegram startup, bot stop/drain and bot memory
+measurement remain pending on final `main`, after delivery to `main` and
+`origin/main`. The owner approved this timing on 2026-10-28. No live Docker
+integration result is claimed before that check.
 
 Native arm64 image sizes: backend 293 MB,
 web 60.5 MB, Whisper 1.02 GB. No size budget applies. The model cache occupies a

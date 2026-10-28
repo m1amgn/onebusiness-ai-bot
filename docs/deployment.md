@@ -136,9 +136,10 @@ calls. A healthy bot heartbeat means polling works. It does not detect ten handl
 stuck on database locks. A healthy Celery main process alone does not prove that a
 pool child works; the acceptance run sends actual jobs and injects a child failure.
 
-S8 measures Linux cgroup `memory.peak` and sets each limit to at least twice its
-measured peak. The shared development PostgreSQL and Redis limits come from the full
-verification workload. Measure the server's own load before changing these values.
+S8 measures Linux cgroup `memory.peak` and sets each measured service's limit to at
+least twice its peak. The bot's limit is provisional. The shared development
+PostgreSQL and Redis limits come from the full verification workload. Measure the
+server's own load before changing these values.
 The optional multilingual `base` model uses `WHISPER_MEM_LIMIT=1g` by default;
 `WHISPER_MODEL=base` is the supported model. Another model needs a pinned checksum,
 compatibility checks and new memory measurements.
@@ -152,15 +153,20 @@ full verification workload; the other measurements use the isolated Docker repla
 | Redis | 53 | 128 |
 | Migration | 62 | 256 |
 | API | 93 | 512 |
-| Bot | Pending test token | 512 |
+| Bot | Owner check on final main | 512 (provisional) |
 | Transcription | 193 | 768 |
 | Notification | 290 | 1024 |
 | Web | 9 | 128 |
 | Seed | 63 | 512 |
 | Whisper base | 393 | 1024 |
 
-The bot limit remains provisional until token-enabled acceptance. The keyless
-replay observed 15 Redis clients, including the measurement client. Measure again with the bot and more open tabs.
+The bot's **512 MiB limit is provisional**. The owner will measure its peak during
+the live check on final `main`, after delivery to `main` and `origin/main`, and
+confirm or raise the limit to at least twice that peak. The same check covers
+Telegram startup and bot stop/drain. The owner approved this deferral on
+2026-10-28; these checks did not run in the S8 worktree. The keyless replay observed
+15 Redis clients, including the measurement client. Measure again with the bot and
+more open tabs.
 
 The application SQL pool ceiling is 25 connections: API 5, bot 5, transcription 5
 and notification 10. Migration, seed and measurement clients are separate short-lived
@@ -178,10 +184,11 @@ Check both Linux architectures with `docker buildx imagetools inspect`. Update t
 Dockerfiles and pulled Compose images together. For whisper.cpp, record the source
 revision of both architecture images and retain the model checksum.
 
-Run `yarn verify` and the isolated acceptance script on the candidate commit. Test
-the owner's live integrations on that reviewed commit, keep a backup and then plan
-the server maintenance window. Immutable pins require this deliberate update; a
-restart does not fetch a patched image under a different digest.
+Run `yarn verify` and the isolated acceptance script on the candidate commit.
+The owner tests live integrations on final `main` after delivery to `main` and
+`origin/main`. Keep a backup and then plan the server maintenance window.
+Immutable pins require this deliberate update; a restart does not fetch a patched
+image under a different digest.
 
 Telegram uses long polling. Keep outbound access to Telegram and the selected
 provider. A webhook deployment needs its own HTTPS endpoint and lifecycle design;
