@@ -1,6 +1,6 @@
 # S11 — Architecture diagrams for the reviewer
 
-> **STATUS 2026-10-29: ACTIVE.** Stage design, round 2: the pre-handoff lens review and gate round 1 folded in (section 13), the owner's acceptance (section 12).
+> **STATUS 2026-10-29: ACTIVE.** Stage design, round 3: the lens review, gate round 1 and the M1 planarity finding folded in (section 13), the owner's acceptance and S11-D6 (sections 12, 2).
 
 Stage S11 of the umbrella `docs/plans/2026-10-23-umbrella-assessment.md` (section 5, S11; section 19, amendment 8),
 at the tip `48af3d8` of `umbrella/assessment`, after S8's integration. Workflow:
@@ -27,6 +27,7 @@ The owner answered each question on 2026-10-29. The answer is quoted as given.
 | S11-D3 | How the root README shows the diagrams | A section "Architecture": one light PNG of the overview, made from page 1 of its PDF, and a four-row table (diagram, what it shows, PDF, interactive HTML). The PDF is a headless Chrome print, light theme (section 5.2). | «Одна светлая PNG (Recommended)»; the PDF method and theme were stated in the question and not objected to |
 | S11-D4 | Freshness check in `yarn verify` | No. The repo-map check runs once, at S11's acceptance. | «Не включать (Recommended)» |
 | S11-D5 | How the diagrams are built | Once, with the repo-map and archify skills, Chrome and `pdftoppm`. No repository script and no rebuild procedure; the index names the tools and the pinned commit in one line. | «Мне надо сейчас один раз это сделать и все» |
+| S11-D6 | How the overview avoids crossing lines (asked after M1 proved the first graph non-planar) | Telegram drawn as two boxes, the bot's side and the workers' side, explained on a card as one Bot API; OpenAI and whisper drawn as one transcription-provider box. Every relationship stays on the picture; twelve components; showcase quality. | «Telegram дважды (Recommended)» |
 
 Settled without a question:
 
@@ -125,11 +126,12 @@ every name and number.
 
 ### 6.1 System overview (`architecture`, the main diagram)
 
-Components (twelve):
+Components (twelve). Telegram is drawn twice and the two transcription providers once, by S11-D6:
 
 | Id | Type | Shows | Sources |
 |---|---|---|---|
-| `telegram` | external | Telegram Bot API | — |
+| `tg_bot` | external | Telegram Bot API on the bot's side: updates and replies | — |
+| `tg_workers` | external | the same Telegram Bot API on the workers' side: file download, edits and replies | — |
 | `browser` | external | the reviewer's browser running the dashboard | — |
 | `web` | frontend | Compose `web`: nginx, static build, `/api` and SSE proxy, the only published port `127.0.0.1:WEB_PORT` (default 8080) | `docker/nginx.conf:20`, `docker-compose.yml:211` |
 | `api` | backend | Compose `api`: FastAPI REST, tickets, SSE | `entrypoints/api/app.py:61`, `entrypoints/api/realtime.py:50` |
@@ -138,29 +140,36 @@ Components (twelve):
 | `notify` | backend | Compose `worker-notify`: Celery, replies, beat sweep every 60 s | `entrypoints/worker/__init__.py:15`, `application/notify_user.py:73` |
 | `redis` | messagebus | one container, two roles: DB 1 Celery queues `transcription` and `notification`; DB 0 pub/sub `events:user:{id}`, tickets, bot lock and heartbeat | `infrastructure/settings/redis.py:32`, `domain/jobs.py:11`, `infrastructure/redis/client.py:25` |
 | `postgres` | database | users, inbound messages, tasks, voice jobs | `infrastructure/sqlalchemy/tables.py:70`, `docker-compose.yml:59` |
-| `whisper` | backend, `dashed` | Compose `whisper`, profile `whisper`, whisper.cpp on CPU | `docker-compose.yml:224`, `infrastructure/transcription/whisper_server.py:70` |
-| `openai` | cloud | OpenAI transcription (default provider, needs a key) | `infrastructure/transcription/openai.py:36` |
+| `provider` | cloud | the transcription provider chosen by `TRANSCRIPTION_PROVIDER`: OpenAI (default, needs a key) or the Compose `whisper` container (profile `whisper`, whisper.cpp on CPU) | `infrastructure/transcription/openai.py:36`, `infrastructure/transcription/whisper_server.py:70`, `docker-compose.yml:224` |
 | `anthropic` | cloud, `dashed` | Claude Haiku extraction, optional (`TASK_EXTRACTOR=claude` and a key) | `infrastructure/extraction/factory.py:55` |
 
 Relationships (the facts; the author may drop a label only by the archify rule of fully implied endpoints):
 
 - `browser → web` HTTP; `web → api` `/api` and SSE.
-- `telegram ↔ bot` long polling and replies.
+- `tg_bot ↔ bot` long polling and replies.
 - `bot → postgres` tasks and voice jobs; `bot → redis` enqueue on `transcription` and publish events;
   `bot → anthropic` extract (dashed).
-- `redis → transcribe` `transcription` queue; `transcribe → telegram` file download and the retry edit;
-  `transcribe → openai` audio; `transcribe → whisper` audio (dashed); `transcribe → anthropic` extract (dashed);
+- `redis → transcribe` `transcription` queue; `transcribe → tg_workers` file download and the retry edit;
+  `transcribe → provider` audio; `transcribe → anthropic` extract (dashed);
   `transcribe → postgres` task and job state; `transcribe → redis` `notification` job and event.
-- `redis → notify` `notification` queue; `notify → telegram` edit or reply; `notify → postgres` notification state;
+- `redis → notify` `notification` queue; `notify → tg_workers` edit or reply; `notify → postgres` notification state;
   `notify → redis` sweep re-enqueue.
 - `api ↔ postgres` tasks, tokens; `api ↔ redis` tickets, subscribe, publish.
 
-Views: "Messages in" (telegram, bot, postgres, redis, anthropic); "Voice through the queues" (redis, transcribe,
-notify, openai, whisper, telegram); "Live dashboard" (browser, web, api, redis, postgres).
+Views: "Messages in" (tg_bot, bot, postgres, redis, anthropic); "Voice through the queues" (redis, transcribe,
+notify, provider, tg_workers); "Live dashboard" (browser, web, api, redis, postgres).
+
+The graph of section 6.1 as first written contained K3,3 (bot, worker-transcribe and worker-notify each linked to
+Telegram, PostgreSQL and Redis), which no layout draws without a crossing, and showcase rejects every crossing
+(implementation note 2026-10-29, `.tasks/artifacts/2026-10-29-s11/check-overview-planarity.py`). With Telegram split
+and the providers merged the graph is planar (`overview-variants-planarity.py`); an archify candidate with this
+component set validated with zero crossings, leaving four label-clearance errors for the author
+(`overview-variant-a.architecture.json`, a starting point, not a deliverable).
 
 Cards: "One backend image, six services" (`migrate`, `api`, `bot`, `worker-transcribe`, `worker-notify` and `seed` run
-one image; `migrate` runs `alembic upgrade head` once and exits 0 before the others start); "Redis has two roles"
-(DB 1 broker; DB 0 events, tickets, lock, heartbeat); "What is optional" (`whisper` only with
+one image; `migrate` runs `alembic upgrade head` once and exits 0 before the others start); "One service, two boxes or roles"
+(Redis: DB 1 broker, DB 0 events, tickets, lock, heartbeat; the two Telegram boxes are one Bot API, split so that no
+line crosses another); "What is optional" (`whisper` only with
 `COMPOSE_PROFILES=whisper`; Claude only with a key, used by the bot, worker-transcribe and `seed`; without an OpenAI
 key a voice message gets the "transcription unavailable" reply; `seed` behind profile `tools`).
 
@@ -337,7 +346,7 @@ S11 changes no stored data, so the accepted table is what the reviewer sees, not
 | Where | Today | After S11 |
 |---|---|---|
 | Root README | a text table of services, no diagram | section "Architecture" before "Run with Docker": the overview image linked to its PDF, a table of four diagrams with PDF and HTML links |
-| System overview | none | twelve components of section 6.1, each code component cited to a file and line |
+| System overview | none | twelve components of section 6.1, each code component cited to a file and line (after D6, S11-D6 split Telegram into two boxes and merged the two providers, on the owner's answer) |
 | Voice message | none | the fourteen steps of section 6.2, the failure return included |
 | Dashboard live updates | none | the ten steps of section 6.3 |
 | Voice job | none | the states and transitions of section 6.4; `stuck` drawn as a failure kind; the sweep as a card (gate round 1 also moved the notification from a state to a card, section 13) |
@@ -369,3 +378,7 @@ flows, tooling; adversarial). Folded in:
 Design gate round 1 (Codex, 2026-10-29, blocked):
 
 - [HIGH|confirmed] docs/plans/2026-10-29-s11-architecture-diagrams.md:224 - The lifecycle invents a fifth job status, `notified`. Fixed in section 6.4: the four statuses of `VoiceJobStatus` stay; the notification is a card that keeps `done`/`failed` and separates delivered outcomes (`edited`, `replied`) from undelivered ones (`blocked`, `given_up`). The D6 row and the index list follow.
+
+Implementation M1, 2026-10-29 (Codex, returned to design):
+
+- [HIGH|confirmed] docs/plans/2026-10-29-s11-architecture-diagrams.md:145 - The overview's required relationships contain K3,3, so they cannot all be drawn between the original twelve nodes without crossings, while A1 requires showcase validation that rejects every proper crossing. Answered by S11-D6 (the owner's choice among three options: Telegram twice, main path only, or standard quality): section 6.1 now draws Telegram twice and one provider box; planarity and a zero-crossing archify candidate are recorded there.
