@@ -1,6 +1,6 @@
 # S11 — Architecture diagrams for the reviewer
 
-> **STATUS 2026-10-29: ACTIVE.** Stage design, round 3: the lens review, gate round 1 and the M1 planarity finding folded in (section 13), the owner's acceptance and S11-D6 (sections 12, 2).
+> **STATUS 2026-10-29: ACTIVE.** Stage design, round 4: amendment 1 adds the owner-requested stage M4 (section 14); the lens review, gate round 1 and the M1 planarity finding are folded in (section 13); the owner's acceptance and S11-D6 (sections 12, 2).
 
 Stage S11 of the umbrella `docs/plans/2026-10-23-umbrella-assessment.md` (section 5, S11; section 19, amendment 8),
 at the tip `48af3d8` of `umbrella/assessment`, after S8's integration. Workflow:
@@ -14,7 +14,8 @@ with a text table of services and no picture of how the parts connect. S11 adds 
 delivered system, drawn from the code and the Compose stack at `48af3d8`, as interactive HTML and PDF, and a README
 section that shows the main diagram and links every diagram.
 
-S11 changes no application code, no test and no Compose file.
+S11 changes no application code and no Compose file. Amendment 1 (section 14) adds an owner-requested stage M4 that changes
+`.env.example`, one unit test and the README and guides.
 
 ## 2. Decisions
 
@@ -28,6 +29,7 @@ The owner answered each question on 2026-10-29. The answer is quoted as given.
 | S11-D4 | Freshness check in `yarn verify` | No. The repo-map check runs once, at S11's acceptance. | «Не включать (Recommended)» |
 | S11-D5 | How the diagrams are built | Once, with the repo-map and archify skills, Chrome and `pdftoppm`. No repository script and no rebuild procedure; the index names the tools and the pinned commit in one line. | «Мне надо сейчас один раз это сделать и все» |
 | S11-D6 | How the overview avoids crossing lines (asked after M1 proved the first graph non-planar) | Telegram drawn as two boxes, the bot's side and the workers' side, explained on a card as one Bot API; OpenAI and whisper drawn as one transcription-provider box. Every relationship stays on the picture; twelve components; showcase quality. | «Telegram дважды (Recommended)» |
+| S11-D7 | Owner's request after checking the packaged stack on `48af3d8` (relayed by the lead, `.tasks/notes/2026-10-29-owner-full-functionality-and-main.md`) | Stage M4 (section 14): `.env.example`, the README quickstart and the guides default to OpenAI transcription and Claude Haiku extraction; the README's verification record is written from the owner's check. | «Я все посмотрел, все ок, доделывайте схему, проверяйте и актуализируйте Readme, инструкции и .env.example сразу делайте на использование максимального функционала, то есть распозновалку на OpenAI api и задачи на Хайку. Пушим все это дело в origin/main и я буду сдавать тестовое» |
 
 Settled without a question:
 
@@ -53,6 +55,12 @@ Settled without a question:
   which is not on GitHub's default branch until the umbrella's own delivery. A7 checks that every relative link
   targets a committed file; the GitHub check happens at the umbrella's delivery, not in S11.
 - **"How the PDF is made" and "the theme"** (umbrella S11 open questions) are settled by S11-D3 and section 5.2.
+- **Owner-requested addition: full-functionality defaults and the live verification record** (beyond the umbrella's
+  S11 scope, which changes documentation only). The owner, 2026-10-29, after checking the packaged stack on `48af3d8`:
+  «Я все посмотрел, все ок, доделывайте схему, проверяйте и актуализируйте Readme, инструкции и .env.example сразу делайте на использование максимального функционала, то есть распозновалку на OpenAI api и задачи на Хайку. Пушим все это дело в origin/main и я буду сдавать тестовое». S11 therefore also changes `.env.example`, `backend/tests/unit/test_env_example.py`, the README outside
+  the "Architecture" section, `docs/development.md` and `docs/deployment.md` (stage M4, section 14). The decomposition
+  does not change, so the umbrella is not amended (the lead's ledger note of 2026-10-29). The push to `origin/main`
+  in the owner's words is the lead's act after S11 and the umbrella's final review, not part of S11.
 
 ## 4. Approaches (D4)
 
@@ -296,9 +304,10 @@ The section contains no fenced `sh` block and no inline code that starts with `d
 |---|---|---|
 | M1 | The system overview: spec, HTML, summary, PDF, PNG | A1, A3, A5 for the overview; the PNG half of A6; A8 and A12 on the files so far |
 | M2 | Voice message, live updates, voice job: specs, HTML, summaries, PDFs | A1 and A5 for the three diagrams; A8 and A12 on the files so far |
-| M3 | The index and the root README section | A4, A7, the README half of A6; then on the final commit A2, A8, A9, A10, A11, A12 |
+| M3 | The index and the root README section | A4, A7, the README half of A6 |
+| M4 | Full-functionality defaults and the live verification record (section 14) | A13–A17; then on the final commit A2, A8, A9, A10, A11, A12, A18 |
 
-M2 follows M1; M3 follows M1 and M2, because the index links every diagram. Before the last implementation commit and before review, the implementer merges the current
+M2 follows M1; M3 follows M1 and M2, because the index links every diagram; M4 follows M3, because it edits the README after the inserted section. Before the last implementation commit and before review, the implementer merges the current
 `umbrella/assessment` tip and runs `git diff --stat 48af3d8..HEAD -- <every cited path>`. An empty diff keeps the pin.
 A non-empty diff means re-pin the overview, redo A3 and A4, and say so in the note.
 
@@ -319,8 +328,9 @@ A non-empty diff means re-pin the overview, redo A3 and A4, and say so in the no
   `git grep -nE '/Users/|/private/|/var/|/tmp/|/home/|file://|\.claude|@[a-z0-9-]+\.[a-z]{2,}|[0-9]{8,}:[A-Za-z0-9_-]{30,}' -- docs/architecture README.md`
   prints nothing that is not a code identifier, and the reviewer reads every hit. On every PDF: `pdfinfo` and
   `pdftotext` output passes the same pattern; on the PNG: `strings` output passes it.
-- A9: The S11 diff touches only `docs/architecture/`, `docs/plans/2026-10-29-s11-architecture-diagrams.md` and
-  the root `README.md`.
+- A9: The S11 diff touches only `docs/architecture/`, `docs/plans/2026-10-29-s11-architecture-diagrams.md`, the root
+  `README.md`, and for M4 `.env.example`, `backend/tests/unit/test_env_example.py`, `docs/development.md` and
+  `docs/deployment.md`. `docker-compose.yml` and application code stay unchanged.
 - A10: `yarn verify` passes on the final commit (with `yarn infra:up` as its documented prerequisite); it includes
   `scripts/readme-commands.test.mjs`.
 - A11: The diagrams show the code at `48af3d8`: the reviewer checks against the cited lines the service names, the
@@ -329,10 +339,34 @@ A non-empty diff means re-pin the overview, redo A3 and A4, and say so in the no
   publish and enqueue in sections 6.2 and 6.3.
 - A12: `git ls-files docs/architecture | sort` lists exactly the files of section 5.1 that exist at that stage, and no
   `*.visual-check.*`, `*.print.html` or profile file is in the worktree.
+- A13: `.env.example` sets `TRANSCRIPTION_PROVIDER=openai`, `TASK_EXTRACTOR=claude` and
+  `ANTHROPIC_MODEL=claude-haiku-5-5`; `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` stay empty.
+- A14: `backend/tests/unit/test_env_example.py` asserts the example's `TASK_EXTRACTOR` is `claude`, keeps every other
+  default check and the empty-secret check, and passes; the new assertion fails on the `.env.example` of `48af3d8`
+  (the red run is cited in the note).
+- A15: The README's "Run with Docker" names the three secrets a reviewer types into `.env` (the test bot token,
+  `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) and says what happens without each key: a voice message gets "Transcription
+  is unavailable right now. Your message was not lost: please type it as text."; a text message still creates a task,
+  titled from the text, and the reply adds "The language model was unavailable, so the title is taken from your text."
+  (`backend/src/taskbot/application/replies.py:15`, `:44`). The settings table, `docs/development.md` and
+  `docs/deployment.md` state the same defaults; none of them calls `heuristic` the delivered default. The Compose
+  fallback for a missing `.env` value stays the keyless `heuristic`, and the README says so in one sentence.
+- A16: The README's verification record states the owner's Docker check of 2026-10-29 on `48af3d8` (section 14) and
+  nothing beyond it: what was met, the bot memory, and what was not run (voice without a key, the local Whisper
+  container); the earlier development and Docker checks stay. No other "verified" claim is added.
+- A17: The README section "Architecture" (M3) is unchanged by M4; `scripts/readme-commands.test.mjs` passes.
+- A18: `node scripts/stack-acceptance.mjs` (keyless by default) passes once on S11's final commit, with no paid call:
+  its environment sets `TASK_EXTRACTOR=heuristic` and empty provider keys (`scripts/lib/stack-runtime.mjs:55`).
+  The output and the commit are in the note.
 
 ## 11. Change profile
 
-Documentation only: new files under `docs/architecture/`, one README section, this design. No application code, test,
+Amendment 1 (M4) adds configuration defaults in `.env.example` (the delivered stack's settings when a reviewer copies
+it), one unit test that pins them, and operator documentation. It touches no code path, Compose file, API, stored
+data or authorization; a reviewer who copies the example and sets the keys gets the paid providers, and one without
+keys sees the replies of A15. Its check: the keyless acceptance replay (A18) and the default-pinning tests.
+
+M1–M3, documentation only: new files under `docs/architecture/`, one README section, this design. No application code, test,
 Compose file, public API or stored data changes; no new process, store or external service. Earns: the repository's
 conventions (English, no secrets, README command test), prior art, and the architecture-documentation check, which is
 this stage's subject. Nothing touches money, authorization, migrations or concurrency. The diff touches more than
@@ -382,3 +416,53 @@ Design gate round 1 (Codex, 2026-10-29, blocked):
 Implementation M1, 2026-10-29 (Codex, returned to design):
 
 - [HIGH|confirmed] docs/plans/2026-10-29-s11-architecture-diagrams.md:145 - The overview's required relationships contain K3,3, so they cannot all be drawn between the original twelve nodes without crossings, while A1 requires showcase validation that rejects every proper crossing. Answered by S11-D6 (the owner's choice among three options: Telegram twice, main path only, or standard quality): section 6.1 now draws Telegram twice and one provider box; planarity and a zero-crossing archify candidate are recorded there.
+
+## 14. Amendment 1 (2026-10-29): full-functionality defaults and the live verification record, stage M4
+
+The owner checked the packaged stack on `48af3d8` and asked (S11-D7): «Я все посмотрел, все ок, доделывайте схему, проверяйте и актуализируйте Readme, инструкции и .env.example сразу делайте на использование максимального функционала, то есть распозновалку на OpenAI api и задачи на Хайку. Пушим все это дело в origin/main и я буду сдавать тестовое».
+
+What M4 changes:
+
+1. `.env.example`: `TASK_EXTRACTOR=claude` (was `heuristic`); `TRANSCRIPTION_PROVIDER=openai` and
+   `ANTHROPIC_MODEL=claude-haiku-5-5` stay. Secrets stay empty.
+2. `backend/tests/unit/test_env_example.py`: `TASK_EXTRACTOR` leaves the "example equals the settings default" set,
+   and the test asserts the example's value `claude` (A14). The settings default in code
+   (`backend/src/taskbot/infrastructure/settings/extractor.py:7`) stays `heuristic`, so a process without a value, the
+   test harnesses and the keyless acceptance stay keyless.
+3. README "Run with Docker", the settings table and "Behaviour and limits": three secrets; the keyless outcomes of A15;
+   the Compose fallback sentence.
+4. README verification record, rewritten from the owner's check (lead's umbrella ledger note, 2026-10-29T04:31Z):
+   on `48af3d8` with a test bot and the owner's OpenAI and Anthropic keys, seven services healthy and `migrate`
+   exited 0, no restart and no OOM kill; a text message created a task shown live on the board (O1); `/dashboard`
+   signed in and the event stream opened (O2); two voice messages transcribed by OpenAI on the first attempt (O4);
+   Claude wrote the titles with `TASK_EXTRACTOR=claude` (O6); `/tasks` listed current tasks (O7); a board move showed
+   in `/tasks` (O8); after `docker compose restart api` the board reconnected without a reload (O9); on
+   `docker compose stop` the bot drained in 0.28 s of its 40 s grace; bot memory 212 MiB of the 512 MiB limit. Not
+   run in that check: a voice message without a key (O3) and the local Whisper container (O5). Row names follow
+   `docs/plans/2026-10-27-s8-delivery.md` section 7 (rows O1–O9).
+5. `docs/development.md` (settings table and the Claude section) and `docs/deployment.md` (any default it states):
+   the same defaults.
+
+Decided by the designer:
+
+- **The Compose fallback `${TASK_EXTRACTOR:-heuristic}` stays.** A reviewer who follows the README copies
+  `.env.example` and gets Claude; a run without `.env` stays keyless and attempts no paid call; and
+  `docker-compose.yml` is cited by the overview, so a change would make it `STALE` and force a re-pin and rebuild of
+  M1. The README says the fallback in one sentence (A15).
+- **The realtime ticket in the API access log is out of scope.** The owner did not ask for it; it is an application
+  change; the logged ticket is single-use, 30 s, and consumed by the very request that logs it
+  (`backend/src/taskbot/infrastructure/redis/tickets.py:45`). It stays a LOW observation for the umbrella's final
+  review.
+
+D6 for M4 — what a reviewer sees, from the code at `48af3d8`:
+
+| Row | Today | After M4 |
+|---|---|---|
+| Reviewer copies `.env.example`, sets token, OpenAI and Anthropic keys, sends text | title by the heuristic (`TASK_EXTRACTOR=heuristic`) | title and description by Claude Haiku |
+| Same, no Anthropic key | "Task created: <title>" | "Task created: <title>" and the line "The language model was unavailable, so the title is taken from your text." |
+| Voice with an OpenAI key / without | transcribed / "Transcription is unavailable right now…" | unchanged |
+| README quickstart | names the token and the OpenAI key | names the token, the OpenAI key and the Anthropic key, and the keyless outcomes |
+| README verification record | Docker live checks pending on final `main` | the owner's 2026-10-29 Docker check, with O3 and O5 named as not run |
+
+The owner's words above are the acceptance of rows 1, 4 and 5; row 2 is their stated consequence ("what a reviewer
+without a key sees", lead's note); row 3 does not change.
