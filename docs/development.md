@@ -49,9 +49,10 @@ precedence. `TASKBOT_ENV_FILE` selects another dotenv file. Tests use
 ignore empty values; a required field still needs a value from another source.
 Each process validates only the settings it reads.
 
-These are the current application defaults. `.env.example` supplies the local
-`DATABASE_URL`; the application settings require that URL rather than defining
-a database default.
+The table follows the copied `.env.example`, which selects OpenAI voice and Claude Haiku task extraction.
+Set `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` in the untracked `.env` for full functionality.
+The example supplies the local `DATABASE_URL`; application settings require that URL.
+Without a value for `TASK_EXTRACTOR`, the code and Compose fallback is `heuristic`.
 
 | Variable | Default or requirement | Use |
 |---|---|---|
@@ -65,7 +66,7 @@ a database default.
 | `OPENAI_API_KEY` | Unset | Required for real OpenAI transcription; missing keys leave text usable |
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-transcribe` | OpenAI transcription model |
 | `WHISPER_SERVER_URL` | `http://127.0.0.1:8178` | Local Whisper HTTP server |
-| `TASK_EXTRACTOR` | `heuristic` | `heuristic` or `claude` |
+| `TASK_EXTRACTOR` | `claude` in the copied example | `heuristic` or `claude`; missing keys use the degraded heuristic |
 | `ANTHROPIC_API_KEY` | Unset | Claude extraction; requested Claude without a key uses the degraded heuristic |
 | `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Claude extraction model |
 | `WEB_BASE_URL` | `http://localhost:5173` | Dashboard links from the development bot and seed; strips a trailing slash |
@@ -378,14 +379,14 @@ voice messages stopped at the acknowledgement, because transcription is a later 
 SIGINT stopped the bot in about 3 s and released its polling lock. Offline handler,
 adapter and lifecycle checks use a fake Telegram transport; integration checks use
 real isolated PostgreSQL and Redis.
-The `/tasks` command and the private `/start`, `/tasks`, `/dashboard` menu have
-offline and isolated-store coverage; they have not been checked live on Telegram.
+The `/tasks` command has offline and isolated-store coverage and was checked in the owner's Docker run on 2026-10-29.
+The private `/start`, `/tasks`, `/dashboard` menu has offline and isolated-store coverage;
+it has not been separately checked live on Telegram.
 The bot registers that menu once at startup, with a ten-second request timeout.
 A registration failure logs a warning and polling continues.
 
-The dated Telegram check above used local development processes. The owner's
-packaged-Docker checks remain pending after review; they have a separate record
-in the [README](../README.md).
+The dated Telegram check above used local development processes.
+The owner's packaged-Docker check of 2026-10-29 has a separate record in the [README](../README.md).
 
 ## Workers
 
@@ -498,8 +499,8 @@ the stand and its owned resources.
 
 ## Claude extraction
 
-The default `TASK_EXTRACTOR=heuristic` needs no provider key. To use Claude, set
-`TASK_EXTRACTOR=claude` and `ANTHROPIC_API_KEY` in the untracked root `.env`.
+The copied example selects `TASK_EXTRACTOR=claude`. Set `ANTHROPIC_API_KEY` in the untracked root `.env`
+to use Claude Haiku. For explicit keyless extraction, set `TASK_EXTRACTOR=heuristic`.
 `ANTHROPIC_MODEL` defaults to `claude-haiku-5-5`. Keep real keys out of git.
 Apply `yarn db:migrate` before starting code that writes descriptions longer than
 2000 characters; the current limit is 4096, with a 120-character title.

@@ -75,6 +75,13 @@ inspect those values. File-based secrets require configuration or adapter suppor
 store; the delivered application reads environment variables. Use a separate test
 bot and provider keys for acceptance.
 
+The copied `.env.example` selects OpenAI voice (`TRANSCRIPTION_PROVIDER=openai`) and Claude Haiku tasks
+(`TASK_EXTRACTOR=claude`, `ANTHROPIC_MODEL=claude-haiku-5-5`).
+Set `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` for full functionality.
+Without the OpenAI key, voice asks the user to type the message.
+Without the Anthropic key, text still creates a task and the reply identifies the text-derived fallback.
+If `TASK_EXTRACTOR` has no value, Compose falls back to `heuristic`.
+
 `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` default to `taskbot` when
 empty. Use non-default values before the first server start. Use letters and digits
 because Compose places them in `DATABASE_URL` without URL encoding. Changing them
@@ -153,18 +160,18 @@ full verification workload; the other measurements use the isolated Docker repla
 | Redis | 53 | 128 |
 | Migration | 62 | 256 |
 | API | 93 | 512 |
-| Bot | Owner check on final main | 512 (provisional) |
+| Bot | Not measured in the keyless replay | 512 (provisional) |
 | Transcription | 193 | 768 |
 | Notification | 290 | 1024 |
 | Web | 9 | 128 |
 | Seed | 63 | 512 |
 | Whisper base | 393 | 1024 |
 
-The bot's **512 MiB limit is provisional**. The owner will measure its peak during
-the live check on final `main`, after delivery to `main` and `origin/main`, and
-confirm or raise the limit to at least twice that peak. The same check covers
-Telegram startup and bot stop/drain. The owner approved this deferral on
-2026-10-28; these checks did not run in the S8 worktree. The keyless replay observed
+The bot's **512 MiB limit is a provisional server budget**.
+The owner's Docker check of 2026-10-29 observed 212 MiB and checked Telegram startup and bot stop/drain;
+the [README](../README.md) records that check. Measure the server's cgroup peak under its own load
+and keep the limit at least twice that peak. These checks did not run in the S8 worktree.
+The keyless replay observed
 15 Redis clients, including the measurement client. Measure again with the bot and
 more open tabs.
 

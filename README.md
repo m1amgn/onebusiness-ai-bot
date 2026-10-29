@@ -31,6 +31,9 @@ Python, Node or database installation. Keep port 8080 free, or change `WEB_PORT`
    ```
 
 2. Put a separate test bot's token in `.env` as `TELEGRAM_BOT_TOKEN`.
+   Add `OPENAI_API_KEY` for voice and `ANTHROPIC_API_KEY` for task titles and descriptions.
+   The copied example selects `TRANSCRIPTION_PROVIDER=openai`, `TASK_EXTRACTOR=claude`
+   and `ANTHROPIC_MODEL=claude-haiku-5-5`.
    Stop any other poller of that token, including a development bot.
 
 3. Build and start:
@@ -41,9 +44,13 @@ Python, Node or database installation. Keep port 8080 free, or change `WEB_PORT`
 
    Send `/dashboard` to the bot and open its link at `http://localhost:8080`.
 
-Voice uses OpenAI when `OPENAI_API_KEY` is set. Without a key, the bot replies
-that transcription is unavailable and asks you to type the message. For local
-CPU transcription, set both lines in `.env`, then repeat step 3:
+Voice uses OpenAI. Without `OPENAI_API_KEY`, the bot replies:
+"Transcription is unavailable right now. Your message was not lost: please type it as text."
+Without `ANTHROPIC_API_KEY`, text still creates a task with a title taken from the text.
+The reply adds: "The language model was unavailable, so the title is taken from your text."
+If `TASK_EXTRACTOR` has no value, Compose falls back to `heuristic`.
+
+For local CPU transcription, set both lines in `.env`, then repeat step 3:
 
 ```dotenv
 TRANSCRIPTION_PROVIDER=whisper_server
@@ -52,10 +59,11 @@ COMPOSE_PROFILES=whisper
 
 The first Whisper start downloads and verifies the multilingual `base` model.
 Keep outbound access to Hugging Face. This CPU container runs more slowly than
-the development Mac's Metal server. No provider fallback happens automatically.
+the development Mac's Metal server. Transcription never switches providers automatically.
 
 ## Run without a Telegram token
 
+For this keyless example, set `TASK_EXTRACTOR=heuristic` in `.env`.
 Start the other services and create a task with a dashboard link:
 
 ```sh
@@ -80,7 +88,8 @@ Real tokens and keys belong only in the untracked `.env`.
 | `OPENAI_API_KEY` | Enables OpenAI voice transcription |
 | `COMPOSE_PROFILES=whisper` | Starts the local whisper.cpp container |
 | `WHISPER_MODEL`, `WHISPER_MEM_LIMIT` | Supported model `base`, limit `1g` |
-| `TASK_EXTRACTOR` | `heuristic`; set `claude` with `ANTHROPIC_API_KEY` for model-written titles and descriptions |
+| `TASK_EXTRACTOR` | `claude` in the copied example; `ANTHROPIC_API_KEY` enables model-written titles and descriptions |
+| `ANTHROPIC_MODEL` | `claude-haiku-5-5` |
 
 Database credentials must use letters and digits because they enter a connection
 URL. Changing `.env` after initialization does not change the database's stored
@@ -116,7 +125,8 @@ backups, monitoring and image updates. No server has been deployed.
 ## Behaviour and limits
 
 - One message produces one task. Task titles retain the message's language;
-  bot replies use English. The heuristic works without a model key.
+  bot replies use English. Claude Haiku writes titles and descriptions;
+  a missing model key uses the text-derived fallback with a notice.
 - The private dashboard uses a bearer token rather than a password. A new
   `/dashboard` link signs out other devices. The browser keeps the token in local
   storage without expiry; keep dashboard links private.
@@ -174,8 +184,8 @@ node scripts/stack-acceptance.mjs
 The replay prints R1–R7 results, uses its own project and free web port, disables
 paid calls for synthetic tasks and cleans up on success, failure or Ctrl-C. It
 runs without credentials by default, ignoring `.env` credentials and inherited
-provider keys. R1's Telegram startup, bot stop/drain and bot memory measurement are
-reported as deferred to the owner's check on final `main`. `--with-telegram`
+provider keys. Without a token, R1 reports Telegram startup, bot stop/drain and bot memory
+as deferred for that replay. The owner's Docker check below covers them. `--with-telegram`
 enables these checks with the test bot token in `.env`; `--keyless` explicitly
 selects the default.
 
@@ -183,11 +193,17 @@ Verification record, 2026-10-27: development runs verified Telegram handling,
 OpenAI and local Whisper voice, and the Claude extraction replay. The
 [development guide](docs/development.md) keeps dates and timings. Docker checks
 verified keyless sign-in, nginx, stream reconnection, persistence, dump/restore,
-Linux worker failure/shutdown and real CPU Whisper inference. The owner's
-Telegram/OpenAI/Whisper/Claude check, Telegram startup, bot stop/drain and bot memory
-measurement remain pending on final `main`, after delivery to `main` and
-`origin/main`. The owner approved this timing on 2026-10-28. No live Docker
-integration result is claimed before that check.
+Linux worker failure/shutdown and real CPU Whisper inference.
+
+Owner's Docker check, 2026-10-29, commit `48af3d8`: seven services healthy,
+`migrate` exited 0, no container restart or OOM kill.
+A Telegram text created a task shown live on the board; `/dashboard` signed in and opened the event stream.
+Two voice messages used OpenAI on the first attempt; Claude Haiku wrote titles with `TASK_EXTRACTOR=claude`.
+`/tasks` listed current tasks and reflected a board move.
+After an API restart, the board reconnected without a reload.
+The bot drained in 0.28 s of its 40 s grace; observed bot memory was 212 MiB of the 512 MiB limit.
+
+That owner check did not run voice without an OpenAI key or the local Whisper container.
 
 Native arm64 image sizes: backend 293 MB,
 web 60.5 MB, Whisper 1.02 GB. No size budget applies. The model cache occupies a

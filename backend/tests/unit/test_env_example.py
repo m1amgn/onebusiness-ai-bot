@@ -22,6 +22,7 @@ def test_example_environment_validates_and_contains_no_credentials(
 ) -> None:
     example = Path(__file__).resolve().parents[3] / ".env.example"
     values = dotenv_values(example)
+    assert values["TASK_EXTRACTOR"] == "claude"
     settings_types = (
         SampleSettings,
         ApiSettings,
@@ -42,7 +43,6 @@ def test_example_environment_validates_and_contains_no_credentials(
             assert key in values, f"{key} is missing from .env.example"
             if key in {
                 "REDIS_URL",
-                "TASK_EXTRACTOR",
                 "ANTHROPIC_MODEL",
                 "LOG_LEVEL",
                 "WEB_BASE_URL",
@@ -54,7 +54,7 @@ def test_example_environment_validates_and_contains_no_credentials(
         monkeypatch.delenv(key, raising=False)
         if key.endswith(("_TOKEN", "_KEY")):
             assert values[key] == "", f"{key} must be empty in the committed example"
-    assert SampleSettings(_env_file=example).task_extractor == "heuristic"
+    assert SampleSettings(_env_file=example).task_extractor == "claude"
     assert InfraTestSettings(_env_file=example).database_url.hosts()[0]["host"] == "localhost"
     ApiSettings(_env_file=example)
     MigrationSettings(_env_file=example)
