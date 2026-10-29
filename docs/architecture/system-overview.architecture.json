@@ -1,0 +1,470 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AI Task Bot \u2014 System overview",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1082,
+      490
+    ],
+    "repository": {
+      "url": "https://github.com/m1amgn/onebusiness-ai-bot.git",
+      "provider": "github",
+      "revision": "48af3d82208626cfc7b877e59d9ae57e54a5608e"
+    },
+    "views": [
+      {
+        "id": "messages",
+        "label": "Messages in",
+        "focus": [
+          "tg_bot",
+          "bot",
+          "postgres",
+          "redis",
+          "anthropic"
+        ]
+      },
+      {
+        "id": "voice",
+        "label": "Voice through the queues",
+        "focus": [
+          "redis",
+          "transcribe",
+          "notify",
+          "provider",
+          "tg_workers"
+        ]
+      },
+      {
+        "id": "dashboard",
+        "label": "Live dashboard",
+        "focus": [
+          "browser",
+          "web",
+          "api",
+          "redis",
+          "postgres"
+        ]
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 5,
+    "cellW": 130,
+    "cellH": 64,
+    "gapX": 88,
+    "gapY": 20,
+    "origin": [
+      40,
+      32
+    ]
+  },
+  "components": [
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis",
+      "sublabel": "DB 0 events \u00b7 DB 1 jobs",
+      "col": 2,
+      "row": 0,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/infrastructure/settings/redis.py",
+          "line": 32
+        },
+        {
+          "path": "backend/src/taskbot/domain/jobs.py",
+          "line": 11
+        },
+        {
+          "path": "backend/src/taskbot/infrastructure/redis/client.py",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "web",
+      "sublabel": "nginx \u00b7 static + proxy",
+      "col": 0,
+      "row": 1,
+      "sources": [
+        {
+          "path": "docker/nginx.conf",
+          "line": 20
+        },
+        {
+          "path": "docker-compose.yml",
+          "line": 211
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "api",
+      "sublabel": "FastAPI \u00b7 REST + SSE",
+      "col": 0,
+      "row": 2,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/entrypoints/api/app.py",
+          "line": 61
+        },
+        {
+          "path": "backend/src/taskbot/entrypoints/api/realtime.py",
+          "line": 50
+        }
+      ]
+    },
+    {
+      "id": "browser",
+      "type": "external",
+      "label": "Browser",
+      "sublabel": "React dashboard",
+      "col": 0,
+      "row": 0
+    },
+    {
+      "id": "bot",
+      "type": "backend",
+      "label": "bot",
+      "sublabel": "aiogram \u00b7 long polling",
+      "col": 1,
+      "row": 2,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/entrypoints/bot/__main__.py",
+          "line": 224
+        },
+        {
+          "path": "backend/src/taskbot/entrypoints/bot/handlers.py",
+          "line": 156
+        }
+      ]
+    },
+    {
+      "id": "tg_bot",
+      "type": "external",
+      "label": "Telegram",
+      "sublabel": "updates \u00b7 replies",
+      "col": 1,
+      "row": 3
+    },
+    {
+      "id": "anthropic",
+      "type": "cloud",
+      "label": "Claude Haiku",
+      "sublabel": "optional extraction",
+      "col": 2,
+      "row": 3,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/infrastructure/extraction/factory.py",
+          "line": 55
+        }
+      ]
+    },
+    {
+      "id": "transcribe",
+      "type": "backend",
+      "label": "Transcribe",
+      "sublabel": "worker-transcribe",
+      "col": 3,
+      "row": 2,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/entrypoints/worker/launcher.py",
+          "line": 15
+        },
+        {
+          "path": "backend/src/taskbot/application/transcribe_voice.py",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "provider",
+      "type": "cloud",
+      "label": "Transcription",
+      "sublabel": "OpenAI or whisper",
+      "col": 3,
+      "row": 1,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/infrastructure/transcription/openai.py",
+          "line": 36
+        },
+        {
+          "path": "docker-compose.yml",
+          "line": 224
+        },
+        {
+          "path": "backend/src/taskbot/infrastructure/transcription/whisper_server.py",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "id": "tg_workers",
+      "type": "external",
+      "label": "Telegram",
+      "sublabel": "files \u00b7 edits \u00b7 replies",
+      "col": 3,
+      "row": 3
+    },
+    {
+      "id": "notify",
+      "type": "backend",
+      "label": "worker-notify",
+      "sublabel": "replies + beat (60 s)",
+      "col": 4,
+      "row": 2,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/entrypoints/worker/__init__.py",
+          "line": 15
+        },
+        {
+          "path": "backend/src/taskbot/application/notify_user.py",
+          "line": 73
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "users / tasks / voice_jobs",
+      "col": 2,
+      "row": 4,
+      "sources": [
+        {
+          "path": "backend/src/taskbot/infrastructure/sqlalchemy/tables.py",
+          "line": 70
+        },
+        {
+          "path": "docker-compose.yml",
+          "line": 59
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "browser-web",
+      "from": "browser",
+      "to": "web",
+      "label": "HTTP",
+      "variant": "default",
+      "labelDy": 24
+    },
+    {
+      "id": "web-api",
+      "from": "web",
+      "to": "api",
+      "label": "/api, SSE",
+      "variant": "default",
+      "labelDy": 24
+    },
+    {
+      "id": "api-postgres",
+      "from": "api",
+      "to": "postgres",
+      "label": "tasks/auth",
+      "variant": "default",
+      "labelDx": 40
+    },
+    {
+      "id": "api-redis",
+      "from": "api",
+      "to": "redis",
+      "label": "ticket/pub",
+      "variant": "default",
+      "labelDx": 40
+    },
+    {
+      "id": "tg_bot-bot",
+      "from": "tg_bot",
+      "to": "bot",
+      "label": "updates",
+      "variant": "default",
+      "labelAt": [
+        350,
+        274
+      ]
+    },
+    {
+      "id": "bot-postgres",
+      "from": "bot",
+      "to": "postgres",
+      "label": "tasks/jobs",
+      "variant": "default",
+      "labelAt": [
+        427,
+        364
+      ]
+    },
+    {
+      "id": "bot-redis",
+      "from": "bot",
+      "to": "redis",
+      "label": "jobs/event",
+      "variant": "default"
+    },
+    {
+      "id": "bot-anthropic",
+      "from": "bot",
+      "to": "anthropic",
+      "label": "extract",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        399,
+        274
+      ]
+    },
+    {
+      "id": "redis-transcribe",
+      "from": "redis",
+      "to": "transcribe",
+      "label": "transcribe",
+      "variant": "default",
+      "labelDx": -40
+    },
+    {
+      "id": "transcribe-postgres",
+      "from": "transcribe",
+      "to": "postgres",
+      "label": "task/state",
+      "variant": "default",
+      "labelDy": 100
+    },
+    {
+      "id": "transcribe-tg_workers",
+      "from": "transcribe",
+      "to": "tg_workers",
+      "label": "file/edit",
+      "variant": "default",
+      "labelDy": 24
+    },
+    {
+      "id": "transcribe-provider",
+      "from": "transcribe",
+      "to": "provider",
+      "label": "audio",
+      "variant": "default"
+    },
+    {
+      "id": "transcribe-anthropic",
+      "from": "transcribe",
+      "to": "anthropic",
+      "label": "extract",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [
+        673,
+        274
+      ]
+    },
+    {
+      "id": "redis-notify",
+      "from": "redis",
+      "to": "notify",
+      "label": "notify",
+      "variant": "default",
+      "labelDx": -35
+    },
+    {
+      "id": "notify-tg_workers",
+      "from": "notify",
+      "to": "tg_workers",
+      "label": "edit/reply",
+      "variant": "default",
+      "labelAt": [
+        933,
+        274
+      ]
+    },
+    {
+      "id": "notify-postgres",
+      "from": "notify",
+      "to": "postgres",
+      "label": "state",
+      "variant": "default"
+    },
+    {
+      "id": "bot-tg_bot",
+      "from": "bot",
+      "to": "tg_bot",
+      "label": "poll/reply",
+      "labelAt": [
+        278,
+        274
+      ]
+    },
+    {
+      "id": "transcribe-redis",
+      "from": "transcribe",
+      "to": "redis",
+      "label": "job/event",
+      "labelAt": [
+        679,
+        94.8
+      ]
+    },
+    {
+      "id": "notify-redis",
+      "from": "notify",
+      "to": "redis",
+      "label": "sweep",
+      "labelDx": 35
+    },
+    {
+      "id": "redis-api",
+      "from": "redis",
+      "to": "api",
+      "label": "events",
+      "labelAt": [
+        212,
+        94.8
+      ]
+    },
+    {
+      "id": "postgres-api",
+      "from": "postgres",
+      "to": "api",
+      "label": "rows",
+      "labelDx": -40
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One backend image, six services",
+      "items": [
+        "migrate, api, bot, worker-transcribe, worker-notify, seed. Migrate: alembic upgrade head, exit 0 before apps. Only web publishes 127.0.0.1:WEB_PORT (8080)."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "One service, two boxes or roles",
+      "items": [
+        "Telegram repeats one Bot API. Redis DB 1: transcription, notification. DB 0: events:user:{id}, tickets, bot lock, heartbeat. PostgreSQL: users, inbound_messages, tasks, voice_jobs."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "What is optional",
+      "items": [
+        "OpenAI is default; no key means voice unavailable. TRANSCRIPTION_PROVIDER selects OpenAI or CPU whisper.cpp (COMPOSE_PROFILES=whisper). Claude: TASK_EXTRACTOR=claude + key, in bot/worker/seed. seed: tools profile."
+      ]
+    }
+  ]
+}
