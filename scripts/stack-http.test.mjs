@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 import { checkSeedLink, checkStreamRestart, checkWeb, readTasks } from './lib/stack-http.mjs';
 
@@ -254,17 +255,23 @@ test('checkWeb rejects a missing request-size limit', async (t) => {
 
 test(
   'restart observes EOF and retries fresh authenticated tickets until connected',
-  { timeout: 5000 },
+  { timeout: 15000 },
   async (t) => {
     const site = await serve(t);
-    const result = await checkStreamRestart(site.baseUrl, TOKEN, async () => site.restart(1), {
-      timeoutMs: 2000,
-    });
+    const result = await checkStreamRestart(
+      site.baseUrl,
+      TOKEN,
+      async () => {
+        site.restart(1);
+        // Model a restart longer than the old fixture budget; R3 checks real latency.
+        await delay(2500);
+      },
+      { timeoutMs: 10000 },
+    );
     assert.equal(result.ended, true);
     assert.equal(result.closure, 'eof');
     assert.equal(result.reconnected, true);
     assert.equal(result.attempts, 2);
-    assert.ok(result.reconnectMs < 2000);
     assert.equal(site.streams.length, 2);
     assert.equal(site.requests.filter(({ path }) => path === '/api/realtime/tickets').length, 3);
     assert.ok(
