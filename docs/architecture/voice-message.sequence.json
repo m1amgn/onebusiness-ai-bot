@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Voice message \u2014 Accept, transcribe, notify",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1480,
+      668
+    ],
+    "views": [
+      {
+        "id": "accept",
+        "label": "Accept in the bot",
+        "focus": [
+          "telegram",
+          "bot",
+          "postgres",
+          "redis"
+        ]
+      },
+      {
+        "id": "work",
+        "label": "Transcribe in the worker",
+        "focus": [
+          "redis",
+          "transcribe",
+          "provider",
+          "postgres"
+        ]
+      },
+      {
+        "id": "result",
+        "label": "Notify",
+        "focus": [
+          "redis",
+          "notify",
+          "telegram"
+        ]
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "telegram",
+      "type": "external",
+      "label": "Telegram"
+    },
+    {
+      "id": "bot",
+      "type": "backend",
+      "label": "bot"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL"
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis queues"
+    },
+    {
+      "id": "transcribe",
+      "type": "backend",
+      "label": "Transcribe"
+    },
+    {
+      "id": "provider",
+      "type": "cloud",
+      "label": "Provider"
+    },
+    {
+      "id": "notify",
+      "type": "backend",
+      "label": "worker-notify"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m1",
+      "from": "telegram",
+      "to": "bot",
+      "y": 160,
+      "label": "voice update",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m2",
+      "from": "bot",
+      "to": "telegram",
+      "y": 188,
+      "label": "IF over cap: stop",
+      "variant": "dashed"
+    },
+    {
+      "id": "m3",
+      "from": "bot",
+      "to": "postgres",
+      "y": 216,
+      "label": "commit queued",
+      "variant": "default"
+    },
+    {
+      "id": "m4",
+      "from": "bot",
+      "to": "telegram",
+      "y": 244,
+      "label": "Transcribing\u2026",
+      "variant": "return"
+    },
+    {
+      "id": "m5",
+      "from": "bot",
+      "to": "redis",
+      "y": 272,
+      "label": "enqueue",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m6",
+      "from": "redis",
+      "to": "transcribe",
+      "y": 300,
+      "label": "deliver",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m7",
+      "from": "transcribe",
+      "to": "postgres",
+      "y": 328,
+      "label": "claim +1",
+      "variant": "default"
+    },
+    {
+      "id": "m8",
+      "from": "transcribe",
+      "to": "telegram",
+      "y": 356,
+      "label": "download file",
+      "variant": "default"
+    },
+    {
+      "id": "m9",
+      "from": "transcribe",
+      "to": "provider",
+      "y": 384,
+      "label": "audio",
+      "variant": "default"
+    },
+    {
+      "id": "m10",
+      "from": "provider",
+      "to": "transcribe",
+      "y": 412,
+      "label": "transcript",
+      "variant": "return"
+    },
+    {
+      "id": "m12",
+      "from": "transcribe",
+      "to": "postgres",
+      "y": 440,
+      "label": "extract; commit task + done",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m13",
+      "from": "transcribe",
+      "to": "redis",
+      "y": 468,
+      "label": "publish; enqueue",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m14",
+      "from": "transcribe",
+      "to": "postgres",
+      "y": 496,
+      "label": "ELSE failed(kind)",
+      "variant": "dashed"
+    },
+    {
+      "id": "m15",
+      "from": "transcribe",
+      "to": "redis",
+      "y": 524,
+      "label": "notify only",
+      "variant": "dashed"
+    },
+    {
+      "id": "m16",
+      "from": "redis",
+      "to": "notify",
+      "y": 552,
+      "label": "notify_user",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m17",
+      "from": "notify",
+      "to": "telegram",
+      "y": 580,
+      "label": "edit ack / reply",
+      "variant": "return"
+    }
+  ],
+  "segments": [
+    {
+      "from": 142,
+      "to": 285,
+      "label": "Accept in bot"
+    },
+    {
+      "from": 286,
+      "to": 545,
+      "label": "Transcribe in worker"
+    },
+    {
+      "from": 546,
+      "to": 596,
+      "label": "Notify"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Bot API \u2014 Accept once",
+      "items": [
+        "Reject >120 s or >10,000,000 bytes. Duplicate stops unless queued without acknowledgement. Store ack id before transcribe_voice_job on transcription."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "worker-transcribe",
+      "items": [
+        "OpenAI or whisper-server; 450 s lease. Download, transcribe, extract title + description, then commit task + done. Publish task.created, enqueue notify_user on notification. Dashed failure replaces success: failed(kind), notify only, no event."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Return to Telegram",
+      "items": [
+        "worker-notify edits the acknowledgement to Task created: \u2026. A missing acknowledgement falls back to a reply. Notification retries stop after five attempts."
+      ]
+    }
+  ]
+}

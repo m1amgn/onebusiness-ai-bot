@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Dashboard \u2014 Sign in and receive live updates",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1480,
+      696
+    ],
+    "views": [
+      {
+        "id": "login",
+        "label": "Sign in",
+        "focus": [
+          "user",
+          "bot",
+          "postgres",
+          "browser"
+        ]
+      },
+      {
+        "id": "stream",
+        "label": "Open the stream",
+        "focus": [
+          "browser",
+          "nginx",
+          "api",
+          "redis",
+          "postgres"
+        ]
+      },
+      {
+        "id": "updates",
+        "label": "Live events and reconnect",
+        "focus": [
+          "bot",
+          "browser",
+          "api",
+          "redis"
+        ]
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Telegram user"
+    },
+    {
+      "id": "bot",
+      "type": "backend",
+      "label": "bot"
+    },
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Browser"
+    },
+    {
+      "id": "nginx",
+      "type": "frontend",
+      "label": "nginx"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "api"
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m1",
+      "from": "user",
+      "to": "bot",
+      "y": 160,
+      "label": "/dashboard",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m2",
+      "from": "bot",
+      "to": "postgres",
+      "y": 188,
+      "label": "rotate + commit",
+      "variant": "default"
+    },
+    {
+      "id": "m3",
+      "from": "bot",
+      "to": "redis",
+      "y": 216,
+      "label": "auth.revoked",
+      "variant": "security"
+    },
+    {
+      "id": "m4",
+      "from": "bot",
+      "to": "user",
+      "y": 244,
+      "label": "/#token=<token>",
+      "variant": "return"
+    },
+    {
+      "id": "m6",
+      "from": "browser",
+      "to": "nginx",
+      "y": 272,
+      "label": "ticket + bearer",
+      "variant": "security"
+    },
+    {
+      "id": "m7",
+      "from": "nginx",
+      "to": "api",
+      "y": 300,
+      "label": "POST ticket",
+      "variant": "security"
+    },
+    {
+      "id": "m8",
+      "from": "api",
+      "to": "redis",
+      "y": 328,
+      "label": "SET NX EX 30",
+      "variant": "security"
+    },
+    {
+      "id": "m9",
+      "from": "api",
+      "to": "browser",
+      "y": 356,
+      "label": "201 + ticket",
+      "variant": "return"
+    },
+    {
+      "id": "m10",
+      "from": "browser",
+      "to": "nginx",
+      "y": 384,
+      "label": "GET events",
+      "variant": "default"
+    },
+    {
+      "id": "m11",
+      "from": "nginx",
+      "to": "api",
+      "y": 412,
+      "label": "ticket in query",
+      "variant": "default"
+    },
+    {
+      "id": "m12",
+      "from": "api",
+      "to": "redis",
+      "y": 440,
+      "label": "GETDEL; subscribe",
+      "variant": "security"
+    },
+    {
+      "id": "m13",
+      "from": "api",
+      "to": "postgres",
+      "y": 468,
+      "label": "check version",
+      "variant": "security"
+    },
+    {
+      "id": "m15",
+      "from": "bot",
+      "to": "redis",
+      "y": 496,
+      "label": "publish event",
+      "variant": "default"
+    },
+    {
+      "id": "m16",
+      "from": "redis",
+      "to": "api",
+      "y": 524,
+      "label": "user event",
+      "variant": "return"
+    },
+    {
+      "id": "m17",
+      "from": "api",
+      "to": "browser",
+      "y": 552,
+      "label": "data: frame",
+      "variant": "return"
+    },
+    {
+      "id": "m18",
+      "from": "api",
+      "to": "postgres",
+      "y": 580,
+      "label": "recheck: 20 s",
+      "variant": "security"
+    },
+    {
+      "id": "m19",
+      "from": "browser",
+      "to": "api",
+      "y": 608,
+      "label": "fresh ticket; retry",
+      "variant": "dashed"
+    }
+  ],
+  "segments": [
+    {
+      "from": 142,
+      "to": 258,
+      "label": "Sign in"
+    },
+    {
+      "from": 259,
+      "to": 482,
+      "label": "Open the stream"
+    },
+    {
+      "from": 483,
+      "to": 624,
+      "label": "Events and reconnect"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Private /dashboard link",
+      "items": [
+        "Capture #token= in localStorage. POST /api/realtime/tickets uses the bearer token; 30 s ticket is consumed once with GETDEL."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Subscribe before checking",
+      "items": [
+        "Redis DB 0: subscribe to events:user:{id}, then check token_version. Recheck every 20 s. /dashboard revokes old streams. Publishers: bot, workers and API."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Resync and reconnect",
+      "items": [
+        "Each open reloads all columns. Errors use a fresh ticket after jittered backoff. Same-origin nginx: /api/events unbuffered, 1 h read timeout. Events: task.created, task.updated, task.deleted."
+      ]
+    }
+  ]
+}
