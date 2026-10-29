@@ -83,7 +83,7 @@ entrypoints ──► application ──► domain
 
 - **Extract before the transaction.** A model, transcription, Telegram or file-download call never runs inside a unit of work. Use cases call the extractor first, then open one `UnitOfWork` for the writes.
 - **The transaction belongs to the outermost caller.** Composable use cases expose a `within(uow, …)` step; the worker commits the tasks, the message and the voice job's `done` transition together.
-- **Publish after commit.** Use cases return domain events; entry points publish them and enqueue jobs after the commit. A failed publish is logged, never raised: the database is the authority and the dashboard refetches on reconnect.
+- **Publish after commit.** Events and queue jobs leave only after the commit that produced them. The task and token use cases (`CreateTasksFromMessage`, `ChangeTaskStatus`, `DeleteTask`, `IssueDashboardToken`) commit and return the committed domain events, and the bot, API and seed entry points publish them. The voice use cases (`AcceptVoiceMessage`, `TranscribeVoiceJob`, `NotifyUser`, `RecoverStuckVoiceJobs`) enqueue through `JobQueue` themselves, after their own commit, and `TranscribeVoiceJob` also publishes its events through `publish_events`. A failed publish or enqueue is logged, never raised: the database is the authority, the recovery sweep re-enqueues a lost job, and the dashboard refetches on reconnect.
 - **One message, one task.** A unique key on the Telegram chat and message id makes a duplicate update a no-op.
 - **The extractor never fails a message.** On any provider error, timeout or invalid output it returns the heuristic result marked `degraded`, and `inbound_messages.extractor` records what ran.
 
