@@ -1,6 +1,6 @@
 # S11 — Architecture diagrams for the reviewer
 
-> **STATUS 2026-10-29: ACTIVE.** Stage design, round 1, with the pre-handoff lens review folded in (section 13) and the owner's acceptance (section 12).
+> **STATUS 2026-10-29: ACTIVE.** Stage design, round 2: the pre-handoff lens review and gate round 1 folded in (section 13), the owner's acceptance (section 12).
 
 Stage S11 of the umbrella `docs/plans/2026-10-23-umbrella-assessment.md` (section 5, S11; section 19, amendment 8),
 at the tip `48af3d8` of `umbrella/assessment`, after S8's integration. Workflow:
@@ -213,17 +213,17 @@ Segments: "Sign in" (1–2), "Open the stream" (3–7), "Live events and reconne
 
 ### 6.4 Voice job (`lifecycle`)
 
-States, with their archify type:
+States — the four statuses of `VoiceJobStatus` (`domain/voice_jobs.py:11`), with their archify type:
 
 | State | Type | Meaning |
 |---|---|---|
 | `queued` | `start` | accepted, waiting for a worker |
 | `processing` | `active` | claimed by a worker, 450 s lease |
-| `done` | `success` | task stored |
+| `done` | `success` | terminal; task stored |
 | `failed` | `failure` | terminal; carries a kind, among them `transient_exhausted` (fifth transient failure, reported by the worker) and `stuck` (five attempts used without an answer, after crashes or expired leases) |
-| `notified` | `success` | the user has the result in Telegram; outcome `edited`, `replied`, `blocked` or `given_up` |
 
-`stuck` is a failure kind, not a state. The sweep is not a state: it changes no status and appears as a card.
+There is no fifth status. `stuck` is a failure kind, not a state. The sweep and the notification are not states: they
+change no status and appear as cards.
 
 Transitions — `domain/voice_jobs.py` rules mirrored by guarded SQL in `infrastructure/sqlalchemy/voice_jobs.py`:
 
@@ -234,8 +234,12 @@ Transitions — `domain/voice_jobs.py` rules mirrored by guarded SQL in `infrast
 - `processing → done`: task stored in the same transaction — `domain/voice_jobs.py:128`.
 - `processing → failed`: permanent kind, soft time limit, or the fifth transient failure (`transient_exhausted`) — `domain/voice_jobs.py:141`.
 - `queued | processing (lease expired) → failed`: kind `stuck`, five attempts used — `domain/voice_jobs.py:151`.
-- `done → notified` and `failed → notified` (every kind, `stuck` included): worker-notify edits or replies, at most
-  five attempts — `application/notify_user.py:73`.
+
+Card "Notification, after `done` or `failed`": worker-notify tells the user in Telegram, at most five attempts, and
+then sets `notified_at` and `notification_outcome` on the same row; the status stays `done` or `failed`
+(`domain/voice_jobs.py:182`, `application/notify_user.py:73`). Outcomes `edited` and `replied` mean the user has the
+result. `blocked` (the user blocked the bot, `application/notify_user.py:91`) and `given_up` (five attempts spent,
+`application/notify_user.py:102`, `:155`) mean the result was not delivered. It is a row of the index table.
 
 Card "Recovery sweep": every 60 s worker-notify re-enqueues stale `queued` and `processing` rows and unnotified
 terminal rows; the claim then decides — `application/recover_voice_jobs.py:17`. It is a row of the index table.
@@ -252,7 +256,7 @@ Views: main path; retries and lease; failure and notification.
    the tables below, checked when they were drawn (S11-D2). The generated summaries are tool output; their status
    line refers to the author's tooling.
 5. Three citation tables, one per flow diagram, step → `file:line`, every numbered row of sections 6.2–6.4 plus the
-   sweep card.
+   notification and sweep cards.
 
 ## 8. The root README section "Architecture"
 
@@ -336,7 +340,7 @@ S11 changes no stored data, so the accepted table is what the reviewer sees, not
 | System overview | none | twelve components of section 6.1, each code component cited to a file and line |
 | Voice message | none | the fourteen steps of section 6.2, the failure return included |
 | Dashboard live updates | none | the ten steps of section 6.3 |
-| Voice job | none | the states and transitions of section 6.4; `stuck` drawn as a failure kind; the sweep as a card |
+| Voice job | none | the states and transitions of section 6.4; `stuck` drawn as a failure kind; the sweep as a card (gate round 1 also moved the notification from a state to a card, section 13) |
 | `docs/architecture/README.md` | none | the index of section 7: the pinned commit, the links, three citation tables |
 
 Owner's answer, 2026-10-29: «Да».
@@ -361,3 +365,7 @@ flows, tooling; adversarial). Folded in:
   -root paths, the configurable web port, the publisher label in 6.3, the sweep row, the `-singlefile` PNG name, the
   identity-string and attribution rules: folded in.
 - Not taken: a repository copy of the freshness check (S11-D4).
+
+Design gate round 1 (Codex, 2026-10-29, blocked):
+
+- [HIGH|confirmed] docs/plans/2026-10-29-s11-architecture-diagrams.md:224 - The lifecycle invents a fifth job status, `notified`. Fixed in section 6.4: the four statuses of `VoiceJobStatus` stay; the notification is a card that keeps `done`/`failed` and separates delivered outcomes (`edited`, `replied`) from undelivered ones (`blocked`, `given_up`). The D6 row and the index list follow.
