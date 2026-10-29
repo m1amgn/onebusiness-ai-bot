@@ -4,6 +4,20 @@ Send a private Telegram text or voice message to create a task. Open `/dashboard
 to see tasks arrive live, move them between Pending, In Progress and Completed,
 or delete them. `/tasks` lists current tasks in Telegram.
 
+## Architecture
+
+[![System overview](docs/architecture/system-overview.png)](docs/architecture/system-overview.pdf)
+
+The picture links to its PDF. Open the interactive HTML pages in a browser from a clone.
+The [diagram index](docs/architecture/README.md) explains how the diagrams cite the code.
+
+| Diagram | Shows | PDF | Interactive HTML (from a clone) |
+|---|---|---|---|
+| System overview | Services, connections and optional providers | [PDF](docs/architecture/system-overview.pdf) | [HTML](docs/architecture/system-overview.html) |
+| Voice message | Acceptance, transcription, storage and the reply | [PDF](docs/architecture/voice-message.pdf) | [HTML](docs/architecture/voice-message.html) |
+| Dashboard live updates | Sign-in, event delivery and reconnect | [PDF](docs/architecture/live-updates.pdf) | [HTML](docs/architecture/live-updates.html) |
+| Voice job | States, retries, notification and recovery | [PDF](docs/architecture/voice-job.pdf) | [HTML](docs/architecture/voice-job.html) |
+
 ## Run with Docker
 
 You need Docker with Linux containers and Compose 2.20 or newer. The stack was
